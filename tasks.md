@@ -199,7 +199,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | P01 | Incident record writer | C01 | S | T18 | done | Incident record renderer + JSONL appender; missing optionals render as —. |
 | E00 | Detector: rolling trace window | C01 | S | – | done | TraceWindow: 30 s poll overlap, running-trace refetch, 60-min drop, finished traces not refetched. |
 | E01 | Detector: incidents + alerts | R01, R02, R03 | M | T5, T6, T7 | done | IncidentManager: dedupe per rule+route, alerts, queues behind busy incidents (T5,T6,T7). |
-| E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | todo | |
+| E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | done | Auto-pause + hourly ceiling (T8,T9). Note: containment refuses ceiling pauses <0.5x loss budget before 10 min. |
 | E03 | Detector: verify, resolve, reopen | C01 | S | T17 | done | Verifier: verifying/resolve/reopen, disabled-route status, handoff record (T17); E04 must call on_handed_off. |
 | E04 | Detector main loop + wiring | E00, E01, E02, E03, L01, W01, P01, S01 | M | – | todo | |
 | I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | done | T11: real containment service over HTTP drives demo agent disable_route stop. |
