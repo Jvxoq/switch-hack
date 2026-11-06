@@ -193,11 +193,11 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | R02 | Silent-error rule | C01 | S | T3 | done | Silent-error rule: 3 non-ERROR matches in 5 min per route (report lost in restart; T3 green). |
 | R03 | Cost-spike rule | C01 | S | T4 | done | Cost-spike rule vs per-route hourly median baseline (report lost in restart; T4 green). |
 | S01 | Containment service + incident store | C01 | M | T10, T12 | todo | |
-| L01 | Langfuse HTTP client | C01 | M | – | todo | |
+| L01 | Langfuse HTTP client | C01 | M | – | todo | contract-change: needs httpx; C-FIX adding deps, then re-run. |
 | W01 | Switch HTTP client | C01, H00 | M | T7 (client half) | todo | |
 | D01 | Demo agent with switchable bugs | C01 | M | – | todo | |
 | P01 | Incident record writer | C01 | S | T18 | done | Incident record renderer + JSONL appender; missing optionals render as —. |
-| E00 | Detector: rolling trace window | C01 | S | – | todo | |
+| E00 | Detector: rolling trace window | C01 | S | – | done | TraceWindow: 30 s poll overlap, running-trace refetch, 60-min drop, finished traces not refetched. |
 | E01 | Detector: incidents + alerts | R01, R02, R03 | M | T5, T6, T7 | todo | |
 | E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | todo | |
 | E03 | Detector: verify, resolve, reopen | C01 | S | T17 | todo | |
