@@ -187,8 +187,8 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | ID | Task | Deps | Size | Tests | Status | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | C01 | Scaffold, contracts, fakes | – | M | – | done | Scaffold, contracts, config loader, ports and in-memory fakes pushed; suite green. |
-| C02 | Switch API research → `docs/switch-api.md` | – | S | – | todo | |
-| H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | todo | H |
+| C02 | Switch API research → `docs/switch-api.md` | – | S | – | done | Switch API facts doc (unknowns marked UNCONFIRMED) + scripts/switch_spike.py; no live calls. |
+| H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | blocked | H — waiting on human: run scripts/switch_spike.py per H00 checklist. |
 | R01 | Loop rule | C01 | S | T1, T2 | todo | |
 | R02 | Silent-error rule | C01 | S | T3 | todo | |
 | R03 | Cost-spike rule | C01 | S | T4 | todo | |
