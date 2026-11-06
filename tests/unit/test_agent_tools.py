@@ -5,6 +5,7 @@ The tools run against a fake containment service and a fake clock. No test opens
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +16,7 @@ from typing import Any
 
 import pytest
 import yaml
+from mcp import Client
 
 from tripwire.contracts.models import Incident, Observation, Trace
 from tripwire.contracts.ports import ContainmentRefused
@@ -24,6 +26,7 @@ from tripwire_agent.server import (
     CUT_MARK,
     MAX_TOOL_TEXT_CHARS,
     TripwireTools,
+    build_server,
     register,
 )
 
@@ -51,10 +54,14 @@ class FakeClock:
 
 
 class YieldingClock(FakeClock):
-    """Yields the GIL inside the guard's critical section, so unlocked counting would lose updates."""
+    """Sleeps inside the guard's critical section, so threads without the lock read the same count.
+
+    The guard calls the clock between reading and writing the call count. The sleep lets other
+    threads run there. With the lock in place they wait their turn; without it they all read 0.
+    """
 
     def now(self) -> datetime:
-        time.sleep(0)
+        time.sleep(0.001)
         return super().now()
 
 
@@ -353,3 +360,29 @@ def test_template_instructions_match_instructions_file() -> None:
     instructions = (REPO_ROOT / "tripwire_agent" / "instructions.md").read_text()
 
     assert template["agent"]["instructions"].strip() == instructions.strip()
+
+
+async def _list_tool_names(tools: TripwireTools) -> set[str]:
+    async with Client(build_server(tools)) as client:
+        listed = await client.list_tools()
+    return {tool.name for tool in listed.tools}
+
+
+async def _call_flags_read(tools: TripwireTools, calls: int) -> list[str]:
+    async with Client(build_server(tools)) as client:
+        return [
+            (await client.call_tool("flags_read", {"incident_id": "INC-1"})).content[0].text  # type: ignore[union-attr]
+            for _ in range(calls)
+        ]
+
+
+def test_mcp_lists_the_six_tools_in_process(tools: TripwireTools) -> None:
+    """An in-process MCP client sees exactly the six tools, with no subprocess or socket."""
+    assert asyncio.run(_list_tool_names(tools)) == TOOL_NAMES
+
+
+def test_mcp_call_hits_server_budget(tools: TripwireTools) -> None:
+    """Calls made through MCP hit the server-side budget: the 21st returns BUDGET_SPENT."""
+    results = asyncio.run(_call_flags_read(tools, 21))
+
+    assert [r == BUDGET_SPENT for r in results] == [False] * 20 + [True]

@@ -8,25 +8,36 @@ Provisional, from docs/switch-api.md (Q&A 3 to 5):
   is the fixed value `APPROVAL_APPROVER`, and the containment service skips its owners check for that value.
 
 The approver is never a tool argument: the model fills tool arguments before a human clicks Allow.
-Transport wiring (stdio via the `mcp` package) is not here, because that package is not a dependency yet.
-`register` takes any object with a FastMCP-style `.tool()` decorator.
+Transport: `python -m tripwire_agent.server` serves the tools over MCP stdio (`mcp` SDK, `MCPServer`).
+The budget guard runs here, in the server, so the model cannot skip it. The config comes from
+`TRIPWIRE_CONFIG` (default `tripwire.yaml`); Langfuse keys come from the env vars the config names.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from mcp.server.mcpserver import MCPServer
+
+from tripwire.containment.client import ContainmentHTTPClient
+from tripwire.contracts.config import load_config, resolve_secret
 from tripwire.contracts.models import ACTIONS, Incident, Trace, incident_to_dict
 from tripwire.contracts.ports import Clock, ContainmentRefused
+from tripwire.langfuse_client import LangfuseClient
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_CONFIG_PATH = "tripwire.yaml"
+DEFAULT_LANGFUSE_HOST = "https://cloud.langfuse.com"
 
 APPROVAL_APPROVER = "switch-approval"
 BUDGET_SPENT = "BUDGET SPENT: post partial findings and stop"
@@ -165,11 +176,14 @@ class TripwireTools:
 
         with self._lock:
             budget = self._budget_for(incident_id, incident.ask_round)
+            # The count is read, the clock is called, then the count is written. The lock keeps that
+            # read-modify-write whole: without it, threads that interleave here all see the same count.
+            calls = budget.calls + 1
             now = self._clock.now()
+            budget.calls = calls
             if budget.started_at is None:
                 budget.started_at = now
-            budget.calls += 1
-            over = budget.calls > MAX_CALLS_PER_ROUND or now - budget.started_at >= MAX_ROUND_DURATION
+            over = calls > MAX_CALLS_PER_ROUND or now - budget.started_at >= MAX_ROUND_DURATION
             if over and budget.spent:
                 return BUDGET_SPENT
             if over:
@@ -213,3 +227,34 @@ def register(server: Any, tools: TripwireTools) -> None:
         tools.revert_containment,
     ):
         server.tool()(tool)
+
+
+class SystemClock:
+    """Wall clock in UTC. The guard's 3-minute limit reads it."""
+
+    def now(self) -> datetime:
+        return datetime.now(UTC)
+
+
+def build_server(tools: TripwireTools) -> MCPServer:
+    """An MCP server exposing exactly the six tools. Tests connect to it in-process."""
+    server = MCPServer("tripwire")
+    register(server, tools)
+    return server
+
+
+def main() -> None:
+    """Serve the tools over MCP stdio. stdout carries the protocol, so logs go to stderr."""
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    cfg = load_config(os.environ.get("TRIPWIRE_CONFIG", DEFAULT_CONFIG_PATH))
+    containment = ContainmentHTTPClient(cfg.containment_url)
+    traces = LangfuseClient(
+        os.environ.get("LANGFUSE_HOST", DEFAULT_LANGFUSE_HOST),
+        resolve_secret(cfg, "langfuse_public_key"),
+        resolve_secret(cfg, "langfuse_secret_key"),
+    )
+    build_server(TripwireTools(containment, traces, SystemClock())).run("stdio")
+
+
+if __name__ == "__main__":
+    main()
