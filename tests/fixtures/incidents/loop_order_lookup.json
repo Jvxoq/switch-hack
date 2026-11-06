@@ -1,0 +1,86 @@
+{
+  "description": "Order-lookup agent calls lookup_order with the same input five times in one running trace.",
+  "rule": "loop",
+  "route": "order-lookup",
+  "incident_id": "INC-1",
+  "opened_at": "2026-11-06T12:05:00+00:00",
+  "trigger_trace_id": "tr-loop-1",
+  "traces": [
+    {
+      "id": "tr-loop-1",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T12:00:00+00:00",
+      "end_time": null,
+      "total_cost_usd": 0.1,
+      "observations": [
+        {
+          "id": "loop-o1",
+          "trace_id": "tr-loop-1",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "A-1042"
+          },
+          "output": "status: pending, retry later",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:00:02+00:00",
+          "cost_usd": 0.02
+        },
+        {
+          "id": "loop-o2",
+          "trace_id": "tr-loop-1",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "A-1042"
+          },
+          "output": "status: pending, retry later",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:00:04+00:00",
+          "cost_usd": 0.02
+        },
+        {
+          "id": "loop-o3",
+          "trace_id": "tr-loop-1",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "A-1042"
+          },
+          "output": "status: pending, retry later",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:00:06+00:00",
+          "cost_usd": 0.02
+        },
+        {
+          "id": "loop-o4",
+          "trace_id": "tr-loop-1",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "A-1042"
+          },
+          "output": "status: pending, retry later",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:00:08+00:00",
+          "cost_usd": 0.02
+        },
+        {
+          "id": "loop-o5",
+          "trace_id": "tr-loop-1",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "A-1042"
+          },
+          "output": "status: pending, retry later",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:00:10+00:00",
+          "cost_usd": 0.02
+        }
+      ]
+    }
+  ]
+}
