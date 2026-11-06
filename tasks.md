@@ -201,7 +201,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | E01 | Detector: incidents + alerts | R01, R02, R03 | M | T5, T6, T7 | done | IncidentManager: dedupe per rule+route, alerts, queues behind busy incidents (T5,T6,T7). |
 | E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | done | Auto-pause + hourly ceiling (T8,T9). Note: containment refuses ceiling pauses <0.5x loss budget before 10 min. |
 | E03 | Detector: verify, resolve, reopen | C01 | S | T17 | done | Verifier: verifying/resolve/reopen, disabled-route status, handoff record (T17); E04 must call on_handed_off. |
-| E04 | Detector main loop + wiring | E00, E01, E02, E03, L01, W01, P01, S01 | M | – | todo | |
+| E04 | Detector main loop + wiring | E00, E01, E02, E03, L01, W01, P01, S01 | M | – | done | Detector poll loop, rule wiring, verifier hand-off, auto-pause; 13 integration tests. Gaps fixed in C-FIX4: Langfuse host/records in config, hand-off recorded after downtime. |
 | I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | done | T11: real containment service over HTTP drives demo agent disable_route stop. |
 | A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | done | Tool server w/ server-side call+time budget (T16), room template, instructions; MCP stdio via python -m tripwire_agent.server (A01b); T16 lock-sensitive. PROVISIONAL (H00). |
 | A02 | Fix-PR tool | A01 | S | T15 | done | Fix-PR tool: branch, commit, open PR, store pr_url; never approves/merges (T15). Registered in tool server via C-FIX3. |
