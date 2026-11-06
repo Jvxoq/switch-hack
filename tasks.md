@@ -196,7 +196,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | L01 | Langfuse HTTP client | C01 | M | – | todo | |
 | W01 | Switch HTTP client | C01, H00 | M | T7 (client half) | todo | |
 | D01 | Demo agent with switchable bugs | C01 | M | – | todo | |
-| P01 | Incident record writer | C01 | S | T18 | todo | |
+| P01 | Incident record writer | C01 | S | T18 | done | Incident record renderer + JSONL appender; missing optionals render as —. |
 | E00 | Detector: rolling trace window | C01 | S | – | todo | |
 | E01 | Detector: incidents + alerts | R01, R02, R03 | M | T5, T6, T7 | todo | |
 | E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | todo | |
