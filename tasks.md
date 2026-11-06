@@ -189,7 +189,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | C01 | Scaffold, contracts, fakes | – | M | – | done | Scaffold, contracts, config loader, ports and in-memory fakes pushed; suite green. |
 | C02 | Switch API research → `docs/switch-api.md` | – | S | – | done | Switch API facts doc (unknowns marked UNCONFIRMED) + scripts/switch_spike.py; no live calls. |
 | H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | blocked | H — waiting on human: run scripts/switch_spike.py per H00 checklist. |
-| R01 | Loop rule | C01 | S | T1, T2 | todo | |
+| R01 | Loop rule | C01 | S | T1, T2 | done | Loop rule (T1,T2); allow-list via constructor since RulesConfig lacks it — E04 must wire. |
 | R02 | Silent-error rule | C01 | S | T3 | done | Silent-error rule: 3 non-ERROR matches in 5 min per route (report lost in restart; T3 green). |
 | R03 | Cost-spike rule | C01 | S | T4 | done | Cost-spike rule vs per-route hourly median baseline (report lost in restart; T4 green). |
 | S01 | Containment service + incident store | C01 | M | T10, T12 | todo | |
@@ -200,7 +200,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | E00 | Detector: rolling trace window | C01 | S | – | done | TraceWindow: 30 s poll overlap, running-trace refetch, 60-min drop, finished traces not refetched. |
 | E01 | Detector: incidents + alerts | R01, R02, R03 | M | T5, T6, T7 | todo | |
 | E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | todo | |
-| E03 | Detector: verify, resolve, reopen | C01 | S | T17 | todo | |
+| E03 | Detector: verify, resolve, reopen | C01 | S | T17 | done | Verifier: verifying/resolve/reopen, disabled-route status, handoff record (T17); E04 must call on_handed_off. |
 | E04 | Detector main loop + wiring | E00, E01, E02, E03, L01, W01, P01, S01 | M | – | todo | |
 | I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | todo | |
 | A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | todo | |
