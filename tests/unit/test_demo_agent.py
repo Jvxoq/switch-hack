@@ -95,6 +95,8 @@ def test_loop_bug_repeats_identical_get_order(cfg: TripwireConfig) -> None:
     assert tool_names(trace) == ["get_order"] * DEFAULT_MAX_STEPS
     inputs = {json.dumps(obs.input, sort_keys=True) for obs in trace.observations if obs.type == "tool"}
     assert inputs == {json.dumps({"order_id": "A-1001"}, sort_keys=True)}
+    outputs = [obs.output for obs in trace.observations if obs.type == "tool"]
+    assert outputs == [{"status": "pending", "hint": "call get_order again with the same order_id"}] * DEFAULT_MAX_STEPS
     assert result.status == "step cap reached"
 
 
@@ -243,12 +245,17 @@ def test_anthropic_request_carries_padded_cost_spike_body() -> None:
 def test_anthropic_http_error_becomes_error_run() -> None:
     def fail(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={"error": "upstream down"})
+    recorder = TraceRecorder(prices=Prices())
 
     with httpx.Client(transport=httpx.MockTransport(fail)) as http:
-        result, trace = run_offline("none", model=AnthropicModel("test-key", http=http))
+        result = run_order_lookup(
+            QUESTION, bug="none", model=AnthropicModel("test-key", http=http), model_name="m",
+            flags=StaticFlags(), recorder=recorder,
+        )
 
-    assert result.status == "error"
-    assert (trace.observations[-1].level, trace.observations[-1].cost_usd) == ("ERROR", 0.0)
+    last = result.trace.observations[-1]
+    assert (result.status, last.level, last.cost_usd) == ("error", "ERROR", 0.0)
+    assert "test-key" not in json.dumps([result.trace, recorder.details], default=str)
 
 
 def test_langfuse_batch_tags_route_and_omits_key() -> None:
