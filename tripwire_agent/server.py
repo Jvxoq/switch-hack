@@ -73,6 +73,12 @@ class TraceSource(Protocol):
     def get_trace(self, trace_id: str) -> Trace: ...
 
 
+class FixPr(Protocol):
+    """The fix-PR tool body (`tripwire_agent/tools/open_fix_pr.py`). Typed here to avoid importing it back."""
+
+    def open_fix_pr(self, incident_id: str, title: str, patch: str) -> str: ...
+
+
 @dataclass
 class _Budget:
     ask_round: int
@@ -98,11 +104,13 @@ class TripwireTools:
         clock: Clock,
         *,
         approver: str = APPROVAL_APPROVER,
+        fix_pr: FixPr | None = None,
     ) -> None:
         self._containment = containment
         self._traces = traces
         self._clock = clock
         self._approver = approver
+        self._fix_pr = fix_pr
         self._lock = threading.Lock()
         self._budgets: OrderedDict[str, _Budget] = OrderedDict()
 
@@ -166,6 +174,16 @@ class TripwireTools:
             lambda _incident: json.dumps(self._containment.revert(incident_id, self._approver)),
         )
 
+    def open_fix_pr(self, incident_id: str, title: str, patch: str) -> str:
+        """Open the incident's fix PR. Runs under the same budget as the other tools; it never asks for approval."""
+
+        def open_pr(_incident: Incident) -> str:
+            if self._fix_pr is None:
+                return "refused: the fix-PR tool is not configured"
+            return self._fix_pr.open_fix_pr(incident_id, title, patch)
+
+        return self._run(incident_id, open_pr)
+
     # ---- guard -----------------------------------------------------------
 
     def _run(self, incident_id: str, call: Callable[[Incident], str]) -> str:
@@ -225,6 +243,7 @@ def register(server: Any, tools: TripwireTools) -> None:
         tools.update_incident,
         tools.request_containment,
         tools.revert_containment,
+        tools.open_fix_pr,
     ):
         server.tool()(tool)
 
@@ -237,7 +256,7 @@ class SystemClock:
 
 
 def build_server(tools: TripwireTools) -> MCPServer:
-    """An MCP server exposing exactly the six tools. Tests connect to it in-process."""
+    """An MCP server exposing exactly the seven tools. Tests connect to it in-process."""
     server = MCPServer("tripwire")
     register(server, tools)
     return server

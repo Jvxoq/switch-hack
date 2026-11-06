@@ -39,7 +39,9 @@ TOOL_NAMES = {
     "update_incident",
     "request_containment",
     "revert_containment",
+    "open_fix_pr",
 }
+PATCH = "--- a/app.txt\n+++ b/app.txt\n@@ -1 +1 @@\n-one\n+ONE\n"
 
 
 class FakeClock:
@@ -118,6 +120,17 @@ class FakeTraces:
 
     def get_trace(self, trace_id: str) -> Trace:
         return self._trace
+
+
+class FakeFixPr:
+    """Records each fix-PR call and answers with a PR URL, like the real tool does on success."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    def open_fix_pr(self, incident_id: str, title: str, patch: str) -> str:
+        self.calls.append((incident_id, title, patch))
+        return "PR opened: https://github.com/acme/app/pull/7"
 
 
 def make_incident(incident_id: str = "INC-1") -> Incident:
@@ -327,8 +340,8 @@ class _Recorder:
         return decorate
 
 
-def test_register_exposes_the_six_tools(tools: TripwireTools) -> None:
-    """The server exposes exactly the tools instructions.md names."""
+def test_register_exposes_the_seven_tools(tools: TripwireTools) -> None:
+    """The server exposes exactly the tools instructions.md names, fix-PR included."""
     recorder = _Recorder()
 
     register(recorder, tools)
@@ -376,9 +389,34 @@ async def _call_flags_read(tools: TripwireTools, calls: int) -> list[str]:
         ]
 
 
-def test_mcp_lists_the_six_tools_in_process(tools: TripwireTools) -> None:
-    """An in-process MCP client sees exactly the six tools, with no subprocess or socket."""
+async def _call_open_fix_pr(tools: TripwireTools, calls: int) -> list[str]:
+    async with Client(build_server(tools)) as client:
+        arguments = {"incident_id": "INC-1", "title": "Stop loop", "patch": PATCH}
+        return [
+            (await client.call_tool("open_fix_pr", arguments)).content[0].text  # type: ignore[union-attr]
+            for _ in range(calls)
+        ]
+
+
+def test_mcp_lists_the_seven_tools_in_process(tools: TripwireTools) -> None:
+    """An in-process MCP client sees exactly the seven tools, with no subprocess or socket."""
     assert asyncio.run(_list_tool_names(tools)) == TOOL_NAMES
+
+
+def test_open_fix_pr_consumes_budget(service: FakeContainment, wall_clock: FakeClock) -> None:
+    """Fix-PR calls over MCP count against the round budget, and the 21st never reaches the fix-PR tool."""
+    fix_pr = FakeFixPr()
+    tools = TripwireTools(service, FakeTraces(make_trace()), wall_clock, fix_pr=fix_pr)
+
+    results = asyncio.run(_call_open_fix_pr(tools, 21))
+
+    assert [r == BUDGET_SPENT for r in results] == [False] * 20 + [True]
+    assert len(fix_pr.calls) == 20
+
+
+def test_open_fix_pr_without_tool_refuses(tools: TripwireTools) -> None:
+    """A server built without the fix-PR tool refuses the call instead of crashing."""
+    assert tools.open_fix_pr("INC-1", "Stop loop", PATCH) == "refused: the fix-PR tool is not configured"
 
 
 def test_mcp_call_hits_server_budget(tools: TripwireTools) -> None:
