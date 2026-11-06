@@ -55,14 +55,24 @@ def agent_asks_owner(containment: FakeContainment, incident_id: str) -> None:
     containment.update(incident_id, state="awaiting_approval")
 
 
-def test_owner_cap_resolves_after_quiet_period(cfg: TripwireConfig, clock: FakeClock) -> None:
+def test_owner_cap_resolves_after_quiet_period(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
     detector, langfuse, containment, switch = build(cfg, clock)
-    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 4, running=True, start=clock.now()))
+    langfuse.put(
+        make_trace(
+            trace_id="loop-1", calls=[SEARCH] * 4, running=True, start=clock.now()
+        )
+    )
     detector.poll()
     assert containment.list(open_only=False) == []
 
     clock.advance(seconds=15)
-    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=DEFAULT_START))
+    langfuse.put(
+        make_trace(
+            trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=DEFAULT_START
+        )
+    )
     detector.poll()
     inc = loop_incident(containment)
     assert (inc.rule, inc.route) == ("loop", ROUTE)
@@ -71,7 +81,11 @@ def test_owner_cap_resolves_after_quiet_period(cfg: TripwireConfig, clock: FakeC
     clock.advance(seconds=15)
     containment.apply(inc.id, "cap_max_steps", "owner", "jason", 0.0)
     clock.advance(seconds=15)
-    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=False, start=DEFAULT_START))
+    langfuse.put(
+        make_trace(
+            trace_id="loop-1", calls=[SEARCH] * 5, running=False, start=DEFAULT_START
+        )
+    )
     detector.poll()
     assert containment.get(inc.id).state == "verifying"
 
@@ -86,9 +100,15 @@ def test_owner_cap_resolves_after_quiet_period(cfg: TripwireConfig, clock: FakeC
     assert switch.replies[-1]["text"] == f"record {inc.id}"
 
 
-def test_no_owner_reply_auto_pauses_at_ten_minutes(cfg: TripwireConfig, clock: FakeClock) -> None:
+def test_no_owner_reply_auto_pauses_at_ten_minutes(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
     detector, langfuse, containment, _ = build(cfg, clock)
-    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    langfuse.put(
+        make_trace(
+            trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()
+        )
+    )
     detector.poll()
     inc = loop_incident(containment)
     opened = inc.opened_at
@@ -110,10 +130,16 @@ def test_no_owner_reply_auto_pauses_at_ten_minutes(cfg: TripwireConfig, clock: F
     assert containment.flags()["routes"][ROUTE]["disabled"] is True
 
 
-def test_budget_fraction_pauses_before_ten_minutes(cfg: TripwireConfig, clock: FakeClock) -> None:
+def test_budget_fraction_pauses_before_ten_minutes(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
     detector, langfuse, containment, _ = build(cfg, clock)
     expensive = ("tool", {"q": "x"}, "ok", "DEFAULT", 5.0, "search_orders")
-    langfuse.put(make_trace(trace_id="loop-1", calls=[expensive] * 5, running=True, start=clock.now()))
+    langfuse.put(
+        make_trace(
+            trace_id="loop-1", calls=[expensive] * 5, running=True, start=clock.now()
+        )
+    )
 
     detector.poll()
 
@@ -122,32 +148,51 @@ def test_budget_fraction_pauses_before_ten_minutes(cfg: TripwireConfig, clock: F
     assert clock.now() - inc.opened_at < timedelta(minutes=10)
 
 
-def test_hourly_ceiling_incident_pauses_route(cfg: TripwireConfig, clock: FakeClock) -> None:
+def test_hourly_ceiling_incident_pauses_route(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
     detector, langfuse, containment, _ = build(cfg, clock)
     spend = ("tool", {"q": "y"}, "ok", "DEFAULT", 30.0, "search_orders")
-    langfuse.put(make_trace(trace_id="spend-1", calls=[spend], running=False, start=clock.now()))
-    langfuse.put(make_trace(trace_id="spend-2", calls=[spend], running=False, start=clock.now()))
+    langfuse.put(
+        make_trace(trace_id="spend-1", calls=[spend], running=False, start=clock.now())
+    )
+    langfuse.put(
+        make_trace(trace_id="spend-2", calls=[spend], running=False, start=clock.now())
+    )
 
     detector.poll()
 
-    [ceiling] = [i for i in containment.list(open_only=False) if i.rule == "hourly_ceiling"]
+    [ceiling] = [
+        i for i in containment.list(open_only=False) if i.rule == "hourly_ceiling"
+    ]
     assert ceiling.state == "auto_paused"
     assert containment.flags()["routes"][ROUTE]["disabled"] is True
 
 
-def test_ceiling_pause_refused_before_ten_minutes_is_retried(clock: FakeClock, caplog) -> None:
+def test_ceiling_pause_refused_before_ten_minutes_is_retried(
+    clock: FakeClock, caplog
+) -> None:
     """A ceiling below half the loss budget: the detector says due, the service refuses until 10 minutes."""
-    cfg = load_config_dict({"routes": {ROUTE: {"loss_budget_usd": 50, "hourly_ceiling_usd": 10}}})
+    cfg = load_config_dict(
+        {"routes": {ROUTE: {"loss_budget_usd": 50, "hourly_ceiling_usd": 10}}}
+    )
     detector, langfuse, containment, _ = build(cfg, clock)
     spend = ("tool", {"q": "y"}, "ok", "DEFAULT", 12.0, "search_orders")
-    langfuse.put(make_trace(trace_id="spend-1", calls=[spend], running=False, start=clock.now()))
+    langfuse.put(
+        make_trace(trace_id="spend-1", calls=[spend], running=False, start=clock.now())
+    )
 
     with caplog.at_level(logging.WARNING, logger="tripwire.detector.autopause"):
         detector.poll()
 
-    [ceiling] = [i for i in containment.list(open_only=False) if i.rule == "hourly_ceiling"]
+    [ceiling] = [
+        i for i in containment.list(open_only=False) if i.rule == "hourly_ceiling"
+    ]
     assert ceiling.state != "auto_paused"
-    assert f"auto-pause refused for {ceiling.id}: auto-pause thresholds not reached" in caplog.text
+    assert (
+        f"auto-pause refused for {ceiling.id}: auto-pause thresholds not reached"
+        in caplog.text
+    )
 
     clock.advance(seconds=600)
     detector.poll()
@@ -155,9 +200,15 @@ def test_ceiling_pause_refused_before_ten_minutes_is_retried(clock: FakeClock, c
     assert containment.get(ceiling.id).state == "auto_paused"
 
 
-def test_reopens_when_loop_fires_again_while_verifying(cfg: TripwireConfig, clock: FakeClock) -> None:
+def test_reopens_when_loop_fires_again_while_verifying(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
     detector, langfuse, containment, _ = build(cfg, clock)
-    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    langfuse.put(
+        make_trace(
+            trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()
+        )
+    )
     detector.poll()
     inc = loop_incident(containment)
     agent_asks_owner(containment, inc.id)
@@ -167,22 +218,34 @@ def test_reopens_when_loop_fires_again_while_verifying(cfg: TripwireConfig, cloc
     assert containment.get(inc.id).state == "verifying"
 
     clock.advance(seconds=15)
-    langfuse.put(make_trace(trace_id="loop-2", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    langfuse.put(
+        make_trace(
+            trace_id="loop-2", calls=[SEARCH] * 5, running=True, start=clock.now()
+        )
+    )
     detector.poll()
 
     reopened = containment.get(inc.id)
     assert (reopened.state, reopened.ask_round) == ("awaiting_approval", 2)
 
 
-def test_handed_off_incident_recorded_once(cfg: TripwireConfig, clock: FakeClock) -> None:
+def test_handed_off_incident_recorded_once(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
     written: list[str] = []
 
     def write_record(inc: Incident) -> str:
         written.append(inc.id)
         return f"record {inc.id}"
 
-    detector, langfuse, containment, switch = build(cfg, clock, write_record=write_record)
-    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    detector, langfuse, containment, switch = build(
+        cfg, clock, write_record=write_record
+    )
+    langfuse.put(
+        make_trace(
+            trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()
+        )
+    )
     detector.poll()
     inc = loop_incident(containment)
     agent_asks_owner(containment, inc.id)
@@ -195,7 +258,9 @@ def test_handed_off_incident_recorded_once(cfg: TripwireConfig, clock: FakeClock
     assert [r["text"] for r in switch.replies].count(f"record {inc.id}") == 1
 
 
-def test_handed_off_before_start_not_recorded(cfg: TripwireConfig, clock: FakeClock) -> None:
+def test_handed_off_before_start_not_recorded(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
     written: list[str] = []
     containment_probe = FakeContainment(clock, cfg)
     old = containment_probe.open_incident("loop", ROUTE, clock.now())
@@ -221,7 +286,9 @@ def test_handed_off_before_start_not_recorded(cfg: TripwireConfig, clock: FakeCl
     assert written == []
 
 
-def test_failing_rule_does_not_stop_other_rules(cfg: TripwireConfig, clock: FakeClock) -> None:
+def test_failing_rule_does_not_stop_other_rules(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
     class BrokenRule:
         name = "broken"
 
@@ -230,7 +297,11 @@ def test_failing_rule_does_not_stop_other_rules(cfg: TripwireConfig, clock: Fake
 
     rules = [BrokenRule(), *default_rules(cfg)]
     detector, langfuse, containment, _ = build(cfg, clock, rules=rules)
-    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    langfuse.put(
+        make_trace(
+            trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()
+        )
+    )
 
     events = detector.poll()
 
@@ -238,7 +309,9 @@ def test_failing_rule_does_not_stop_other_rules(cfg: TripwireConfig, clock: Fake
     assert loop_incident(containment).rule == "loop"
 
 
-def test_failing_langfuse_is_logged_and_loop_keeps_polling(cfg: TripwireConfig, clock: FakeClock, caplog) -> None:
+def test_failing_langfuse_is_logged_and_loop_keeps_polling(
+    cfg: TripwireConfig, clock: FakeClock, caplog
+) -> None:
     class DownLangfuse:
         def recent_traces(self, since):
             raise ConnectionError("langfuse down")
@@ -250,14 +323,21 @@ def test_failing_langfuse_is_logged_and_loop_keeps_polling(cfg: TripwireConfig, 
     polls: list[float] = []
 
     with caplog.at_level(logging.ERROR):
-        run(detector, poll_seconds=15, sleep=lambda s: (polls.append(s), clock.advance(seconds=s)), polls=3)
+        run(
+            detector,
+            poll_seconds=15,
+            sleep=lambda s: (polls.append(s), clock.advance(seconds=s)),
+            polls=3,
+        )
 
     assert polls == [15, 15, 15]
     assert "trace refresh failed" in caplog.text
     assert containment.list(open_only=False) == []
 
 
-def test_loop_survives_a_poll_that_raises(cfg: TripwireConfig, clock: FakeClock, caplog) -> None:
+def test_loop_survives_a_poll_that_raises(
+    cfg: TripwireConfig, clock: FakeClock, caplog
+) -> None:
     class FlakyDetector:
         def __init__(self) -> None:
             self.calls = 0
@@ -285,7 +365,12 @@ def test_loop_allow_list_comes_from_config(clock: FakeClock) -> None:
     free_cfg = load_config_dict({"allow_list_tools": []})
 
     def loop_hits(cfg: TripwireConfig) -> list[RuleHit]:
-        return [h for rule in default_rules(cfg) for h in rule.evaluate([page_trace], cfg.rules, clock.now()) if h.rule == "loop"]
+        return [
+            h
+            for rule in default_rules(cfg)
+            for h in rule.evaluate([page_trace], cfg.rules, clock.now())
+            if h.rule == "loop"
+        ]
 
     assert loop_hits(default_cfg) == []
     assert len(loop_hits(free_cfg)) == 1
@@ -299,4 +384,3 @@ def test_main_refuses_to_start_without_langfuse_host(clock: FakeClock, caplog) -
 
     assert code == 2
     assert "LANGFUSE_HOST" in caplog.text
-

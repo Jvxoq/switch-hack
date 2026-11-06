@@ -25,9 +25,20 @@ from datetime import UTC, datetime
 
 from tripwire import records
 from tripwire.containment.client import ContainmentHTTPClient
-from tripwire.contracts.config import ConfigError, TripwireConfig, load_config, resolve_secret
+from tripwire.contracts.config import (
+    ConfigError,
+    TripwireConfig,
+    load_config,
+    resolve_secret,
+)
 from tripwire.contracts.models import Incident, RuleHit, Trace
-from tripwire.contracts.ports import Clock, ContainmentClient, LangfuseReader, Rule, SwitchPoster
+from tripwire.contracts.ports import (
+    Clock,
+    ContainmentClient,
+    LangfuseReader,
+    Rule,
+    SwitchPoster,
+)
 from tripwire.detector.autopause import run_autopause
 from tripwire.detector.incidents import IncidentManager
 from tripwire.detector.verify import Verifier
@@ -123,7 +134,8 @@ class Detector:
             new = [
                 hit
                 for hit in hits
-                if (hit.rule, hit.route) == (inc.rule, inc.route) and hit.trace_id not in inc.trace_ids
+                if (hit.rule, hit.route) == (inc.rule, inc.route)
+                and hit.trace_id not in inc.trace_ids
             ]
             if not new:
                 continue
@@ -141,7 +153,10 @@ class Detector:
             traces=traces,
             ingest=self._ingest_one,
         )
-        return [f"{p.incident_id}: auto-paused {p.route} at ${p.spend_usd:.2f}" for p in pauses]
+        return [
+            f"{p.incident_id}: auto-paused {p.route} at ${p.spend_usd:.2f}"
+            for p in pauses
+        ]
 
     def _ingest_one(self, hit: RuleHit) -> None:
         # The hourly ceiling incident must exist before auto-pause lists the open incidents, so ingest now.
@@ -150,7 +165,9 @@ class Detector:
     def _verify(self) -> list[str]:
         incidents = self._containment.list(open_only=False)
         if self._baseline_handed_off is None:
-            self._baseline_handed_off = {inc.id for inc in incidents if inc.state == "handed_off"}
+            self._baseline_handed_off = {
+                inc.id for inc in incidents if inc.state == "handed_off"
+            }
         tracked = [
             inc
             for inc in incidents
@@ -158,7 +175,9 @@ class Detector:
         ]
         return self._verifier.tick(tracked)
 
-    def _guarded(self, label: str, step: Callable[[], list[str] | None], events: list[str]) -> None:
+    def _guarded(
+        self, label: str, step: Callable[[], list[str] | None], events: list[str]
+    ) -> None:
         try:
             result = step()
         except Exception:
@@ -204,9 +223,15 @@ def main(
 ) -> int:
     parser = argparse.ArgumentParser(prog="python -m tripwire.detector")
     parser.add_argument("--config", required=True, help="path to tripwire.yaml")
-    parser.add_argument("--records", default=DEFAULT_RECORDS_PATH, help="where incident records are appended")
+    parser.add_argument(
+        "--records",
+        default=DEFAULT_RECORDS_PATH,
+        help="where incident records are appended",
+    )
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+    )
 
     env = dict(os.environ if environ is None else environ)
     try:
