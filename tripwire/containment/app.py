@@ -80,11 +80,15 @@ def _default_flags() -> dict[str, Any]:
 def _write_json_atomic(path: Path, data: Any) -> None:
     """Write to a temp file in the same directory, fsync it, then rename over the target."""
     tmp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2, sort_keys=True)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _read_json(path: Path, default: Any) -> Any:
