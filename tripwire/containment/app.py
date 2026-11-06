@@ -365,6 +365,16 @@ class RevertBody(BaseModel):
     by: str | None = None
 
 
+def get_store(request: Request) -> ContainmentStore:
+    """Resolves the store built in lifespan. No logic: the store owns every rule."""
+    store: ContainmentStore = request.app.state.store
+    return store
+
+
+# Module level on purpose: FastAPI resolves string annotations from module globals.
+StoreDep = Annotated[ContainmentStore, Depends(get_store)]
+
+
 class _Clock:
     """Real clock for the default app."""
 
@@ -392,12 +402,6 @@ def create_app(config: TripwireConfig, clock: Clock, state_dir: Path) -> FastAPI
             f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in exc.errors()
         )
         return JSONResponse(status_code=422, content={"reason": reason})
-
-    def get_store(request: Request) -> ContainmentStore:
-        store: ContainmentStore = request.app.state.store
-        return store
-
-    StoreDep = Annotated[ContainmentStore, Depends(get_store)]
 
     @app.post("/incidents", status_code=201)
     def open_incident(body: OpenIncidentBody, store: StoreDep) -> dict[str, Any]:
