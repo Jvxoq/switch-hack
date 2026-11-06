@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import timedelta
 from pathlib import Path
+
+import pytest
 
 from tests.fakes.clock import DEFAULT_START, FakeClock
 from tests.fakes.containment import FakeContainment
 from tests.fakes.langfuse import FakeLangfuse
 from tests.fakes.switch import FakeSwitch
 from tests.fakes.traces import make_trace
-from tripwire.contracts.config import TripwireConfig, load_config_dict
+from tripwire import records
+from tripwire.contracts.config import ConfigError, TripwireConfig, load_config_dict
 from tripwire.contracts.models import Incident, RuleHit, Trace
-from tripwire.detector.main import Detector, default_rules, main, run
+from tripwire.detector.main import (
+    Detector,
+    default_rules,
+    resolve_langfuse_host,
+    resolve_records_path,
+    run,
+)
 
 ROUTE = "order-lookup"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 SEARCH = ("tool", {"q": "Order 42"}, "ok", "DEFAULT", 0.01, "search_orders")
 PAGE = ("tool", {"page": 1}, "ok", "DEFAULT", 0.0, "list_orders_page")
 
@@ -28,10 +37,23 @@ def build(
     reader: object | None = None,
     rules: list | None = None,
     write_record=None,
+    records_path: Path | None = None,
+    containment: FakeContainment | None = None,
+    switch: FakeSwitch | None = None,
 ) -> tuple[Detector, FakeLangfuse, FakeContainment, FakeSwitch]:
+    """A detector over the fakes. With `records_path`, records go to a real JSONL file, as in production.
+
+    Pass `containment` and `switch` to start a second detector over the same service and Switch, as a restart does.
+    """
     langfuse = FakeLangfuse() if reader is None else reader
-    containment = FakeContainment(clock, cfg)
-    switch = FakeSwitch()
+    containment = FakeContainment(clock, cfg) if containment is None else containment
+    switch = FakeSwitch() if switch is None else switch
+    if records_path is None:
+        recorded = set
+        default_write = lambda inc: f"record {inc.id}"
+    else:
+        recorded = lambda: records.recorded_ids(records_path)
+        default_write = file_writer(records_path)
     detector = Detector(
         cfg=cfg,
         reader=langfuse,  # type: ignore[arg-type]
@@ -39,9 +61,27 @@ def build(
         switch=switch,
         clock=clock,
         rules=default_rules(cfg) if rules is None else rules,
-        write_record=write_record or (lambda inc: f"record {inc.id}"),
+        write_record=write_record or default_write,
+        recorded_ids=recorded,
     )
     return detector, langfuse, containment, switch
+
+
+def file_writer(path: Path):
+    """The production record writer: append the record to the JSONL file, then return the thread text."""
+
+    def write_record(inc: Incident) -> str:
+        records.append(inc, path)
+        return f"record {inc.id}"
+
+    return write_record
+
+
+def record_ids_in(path: Path) -> list[str]:
+    """Incident ids in the record log, one per line, in file order."""
+    return [json.loads(line)["id"] for line in path.read_text(encoding="utf-8").splitlines()]
+
+
 
 
 def loop_incident(containment: FakeContainment) -> Incident:
@@ -258,32 +298,55 @@ def test_handed_off_incident_recorded_once(
     assert [r["text"] for r in switch.replies].count(f"record {inc.id}") == 1
 
 
-def test_handed_off_before_start_not_recorded(
-    cfg: TripwireConfig, clock: FakeClock
+def test_restart_after_handoff_records_once(
+    cfg: TripwireConfig, clock: FakeClock, tmp_path: Path
 ) -> None:
-    written: list[str] = []
-    containment_probe = FakeContainment(clock, cfg)
-    old = containment_probe.open_incident("loop", ROUTE, clock.now())
-    containment_probe.update(old.id, state="investigating")
-    containment_probe.update(old.id, state="awaiting_approval")
-    containment_probe.update(old.id, state="handed_off")
-
-    langfuse = FakeLangfuse()
-    switch = FakeSwitch()
-    detector = Detector(
-        cfg=cfg,
-        reader=langfuse,  # type: ignore[arg-type]
-        containment=containment_probe,
-        switch=switch,
-        clock=clock,
-        rules=default_rules(cfg),
-        write_record=lambda inc: written.append(inc.id) or "record",
+    """The hand-off happened while the detector was down. The restarted detector writes its record once."""
+    path = tmp_path / "incidents.log"
+    detector, langfuse, containment, switch = build(cfg, clock, records_path=path)
+    langfuse.put(
+        make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now())
     )
-
     detector.poll()
-    detector.poll()
+    inc = loop_incident(containment)
+    agent_asks_owner(containment, inc.id)
+    containment.update(inc.id, state="handed_off")  # detector is down; no poll sees this
 
-    assert written == []
+    restarted, _, _, _ = build(
+        cfg, clock, reader=langfuse, containment=containment, switch=switch, records_path=path
+    )
+    restarted.poll()
+    restarted.poll()
+
+    assert record_ids_in(path) == [inc.id]
+    assert [r["text"] for r in switch.replies].count(f"record {inc.id}") == 1
+
+
+def test_restart_does_not_rewrite_recorded_handoff(
+    cfg: TripwireConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    """The record was written before the restart. Another start, and polls after it, add nothing."""
+    path = tmp_path / "incidents.log"
+    detector, langfuse, containment, switch = build(cfg, clock, records_path=path)
+    langfuse.put(
+        make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now())
+    )
+    detector.poll()
+    inc = loop_incident(containment)
+    agent_asks_owner(containment, inc.id)
+    containment.update(inc.id, state="handed_off")
+    detector.poll()
+    assert record_ids_in(path) == [inc.id]
+
+    for _ in range(2):
+        restarted, _, _, _ = build(
+            cfg, clock, reader=langfuse, containment=containment, switch=switch, records_path=path
+        )
+        restarted.poll()
+        restarted.poll()
+
+    assert record_ids_in(path) == [inc.id]
+    assert [r["text"] for r in switch.replies].count(f"record {inc.id}") == 1
 
 
 def test_failing_rule_does_not_stop_other_rules(
@@ -376,11 +439,24 @@ def test_loop_allow_list_comes_from_config(clock: FakeClock) -> None:
     assert len(loop_hits(free_cfg)) == 1
 
 
-def test_main_refuses_to_start_without_langfuse_host(clock: FakeClock, caplog) -> None:
-    environ = {"LANGFUSE_PUBLIC_KEY": "pk", "LANGFUSE_SECRET_KEY": "sk"}
+def test_langfuse_host_comes_from_config_without_env(cfg: TripwireConfig) -> None:
+    assert resolve_langfuse_host(cfg, {}) == "http://localhost:3000"
+    assert resolve_langfuse_host(cfg, {"LANGFUSE_HOST": ""}) == "http://localhost:3000"
 
-    with caplog.at_level(logging.ERROR):
-        code = main(["--config", str(REPO_ROOT / "tripwire.yaml")], environ=environ)
 
-    assert code == 2
-    assert "LANGFUSE_HOST" in caplog.text
+def test_langfuse_host_env_overrides_config(cfg: TripwireConfig) -> None:
+    assert resolve_langfuse_host(cfg, {"LANGFUSE_HOST": "http://langfuse:3000"}) == "http://langfuse:3000"
+
+
+def test_records_flag_overrides_config_path(cfg: TripwireConfig) -> None:
+    assert resolve_records_path(None, cfg) == "incident-records.md"
+    assert resolve_records_path("/var/log/records.jsonl", cfg) == "/var/log/records.jsonl"
+
+
+def test_config_refuses_empty_langfuse_host() -> None:
+    with pytest.raises(ConfigError, match="langfuse_host"):
+        load_config_dict({"langfuse_host": ""})
+
+
+def test_config_file_sets_records_path_and_host(cfg: TripwireConfig) -> None:
+    assert (cfg.langfuse_host, cfg.records_path) == ("http://localhost:3000", "incident-records.md")

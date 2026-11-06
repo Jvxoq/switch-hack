@@ -66,5 +66,35 @@ def append(incident: Incident, path: str | Path) -> None:
     line = json.dumps(_record(incident), sort_keys=True)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    # A crash mid-write can leave a last line with no newline. Start a new line so this record is not glued onto it.
+    prefix = "\n" if target.is_file() and _ends_without_newline(target) else ""
     with target.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
+        fh.write(prefix + line + "\n")
+
+
+def _ends_without_newline(target: Path) -> bool:
+    with target.open("rb") as fh:
+        fh.seek(0, 2)
+        if fh.tell() == 0:
+            return False
+        fh.seek(-1, 2)
+        return fh.read(1) != b"\n"
+
+
+def recorded_ids(path: str | Path) -> set[str]:
+    """Incident ids that already have a line in the record log. A missing file has none.
+
+    A torn line (a crash mid-write) is skipped, so that incident counts as not recorded and is written again.
+    """
+    target = Path(path)
+    if not target.is_file():
+        return set()
+    ids: set[str] = set()
+    for line in target.read_text(encoding="utf-8").splitlines():
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("id"), str):
+            ids.add(data["id"])
+    return ids

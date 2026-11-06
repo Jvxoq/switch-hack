@@ -77,3 +77,28 @@ def test_T18_append_writes_jsonl_with_every_field(tmp_path):
     assert set(second) == expected
     assert first["approver"] == "jason"
     assert second["root_cause"] is None
+
+
+def test_T18_recorded_ids_lists_each_appended_incident(tmp_path):
+    path = tmp_path / "incidents.log"
+    records.append(_full(), path)
+    records.append(_empty(), path)
+    assert records.recorded_ids(path) == {"INC-7", "INC-8"}
+
+
+def test_T18_recorded_ids_empty_when_no_file(tmp_path):
+    assert records.recorded_ids(tmp_path / "missing.log") == set()
+
+
+def test_T18_recorded_ids_skips_torn_line(tmp_path):
+    path = tmp_path / "incidents.log"
+    path.write_text('{"id": "INC-7", "rule": "lo', encoding="utf-8")
+    assert records.recorded_ids(path) == set()
+
+
+def test_T18_append_after_torn_line_keeps_new_record(tmp_path):
+    path = tmp_path / "incidents.log"
+    path.write_text('{"id": "INC-7", "rule": "lo', encoding="utf-8")
+    records.append(_full(), path)
+    assert records.recorded_ids(path) == {"INC-7"}
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 2

@@ -8,6 +8,9 @@ Every `poll_seconds`, one poll does, in order:
 4. Every hit goes to `IncidentManager.ingest`.
 5. `run_autopause`: auto-pause and the hourly ceiling. A containment refusal is logged inside it and skipped.
 6. `Verifier.tick` over every incident that is not resolved: verify, resolve, and record handed-off incidents.
+   A handed-off incident that already has a line in the record log is skipped. The record log is the only
+   dedupe source across restarts, so a hand-off that happened while the detector was down is recorded on the
+   next start, and a restart never writes a record twice.
 
 Each step is guarded, so one failing step is logged and the loop keeps going. Incident state lives only in the
 containment service. The only things kept between polls are the last trace window and the de-duplication sets
@@ -51,7 +54,6 @@ from tripwire.switch_client import SwitchError, build_poster
 
 log = logging.getLogger(__name__)
 
-DEFAULT_RECORDS_PATH = "incident-records.md"
 LANGFUSE_HOST_ENV = "LANGFUSE_HOST"
 
 
@@ -78,6 +80,7 @@ class Detector:
         clock: Clock,
         rules: Iterable[Rule],
         write_record: Callable[[Incident], str],
+        recorded_ids: Callable[[], set[str]],
     ) -> None:
         self._cfg = cfg
         self._containment = containment
@@ -93,10 +96,8 @@ class Detector:
             cfg=cfg,
             write_record=write_record,
         )
+        self._recorded_ids = recorded_ids
         self._last_traces: list[Trace] = []
-        # Handed-off incidents that already existed when this process started. The verifier de-duplicates
-        # only in memory, so without this a restart would write their records again.
-        self._baseline_handed_off: set[str] | None = None
 
     def poll(self) -> list[str]:
         """One poll. Returns one line per change, for logs and tests. Never raises for a step's failure."""
@@ -164,14 +165,13 @@ class Detector:
 
     def _verify(self) -> list[str]:
         incidents = self._containment.list(open_only=False)
-        if self._baseline_handed_off is None:
-            self._baseline_handed_off = {
-                inc.id for inc in incidents if inc.state == "handed_off"
-            }
+        recorded = self._recorded_ids()
+        # A handed-off incident already in the record log was recorded by an earlier run (or this one).
         tracked = [
             inc
             for inc in incidents
-            if inc.state != "resolved" and inc.id not in self._baseline_handed_off
+            if inc.state != "resolved"
+            and not (inc.state == "handed_off" and inc.id in recorded)
         ]
         return self._verifier.tick(tracked)
 
@@ -217,6 +217,16 @@ def make_write_record(records_path: str) -> Callable[[Incident], str]:
     return write_record
 
 
+def resolve_langfuse_host(cfg: TripwireConfig, environ: Mapping[str, str]) -> str:
+    """The LANGFUSE_HOST env var wins; otherwise the config's `langfuse_host`."""
+    return environ.get(LANGFUSE_HOST_ENV) or cfg.langfuse_host
+
+
+def resolve_records_path(flag: str | None, cfg: TripwireConfig) -> str:
+    """The --records flag wins; otherwise the config's `records_path`."""
+    return flag if flag is not None else cfg.records_path
+
+
 def main(
     argv: Sequence[str] | None = None,
     environ: Mapping[str, str] | None = None,
@@ -225,8 +235,8 @@ def main(
     parser.add_argument("--config", required=True, help="path to tripwire.yaml")
     parser.add_argument(
         "--records",
-        default=DEFAULT_RECORDS_PATH,
-        help="where incident records are appended",
+        default=None,
+        help="where incident records are appended (default: records_path from the config)",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(
@@ -238,9 +248,8 @@ def main(
         cfg = load_config(args.config)
         public_key = resolve_secret(cfg, "langfuse_public_key", env)
         secret_key = resolve_secret(cfg, "langfuse_secret_key", env)
-        host = env.get(LANGFUSE_HOST_ENV)
-        if not host:
-            raise ConfigError(f"set {LANGFUSE_HOST_ENV} to the Langfuse base URL")
+        host = resolve_langfuse_host(cfg, env)
+        records_path = resolve_records_path(args.records, cfg)
         switch = build_poster(env)
     except (ConfigError, SwitchError) as err:
         log.error("%s", err)
@@ -255,7 +264,8 @@ def main(
         switch=switch,
         clock=SystemClock(),
         rules=default_rules(cfg),
-        write_record=make_write_record(args.records),
+        write_record=make_write_record(records_path),
+        recorded_ids=lambda: records.recorded_ids(records_path),
     )
     try:
         run(detector, poll_seconds=cfg.poll_seconds)

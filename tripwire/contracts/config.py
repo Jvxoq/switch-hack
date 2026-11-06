@@ -67,6 +67,10 @@ class TripwireConfig(_Strict):
     poll_seconds: float = Field(15, gt=0)
     window_minutes: float = Field(60, gt=0)
     containment_url: str = "http://127.0.0.1:8700"
+    # Overridden by the LANGFUSE_HOST env var when that is set (the detector reads it, see detector/main.py).
+    langfuse_host: str = Field("http://localhost:3000", min_length=1)
+    # Incident record log (JSONL). The detector's --records flag overrides it.
+    records_path: str = Field("incident-records.md", min_length=1)
     verify_minutes: float = Field(5, gt=0)
     rules: RulesConfig = Field(default_factory=RulesConfig)
     allow_list_tools: list[str] = Field(default_factory=lambda: ["list_orders_page"])
