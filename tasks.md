@@ -194,7 +194,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | R03 | Cost-spike rule | C01 | S | T4 | done | Cost-spike rule vs per-route hourly median baseline (report lost in restart; T4 green). |
 | S01 | Containment service + incident store | C01 | M | T10, T12 | todo | |
 | L01 | Langfuse HTTP client | C01 | M | – | todo | contract-change: needs httpx; C-FIX adding deps, then re-run. |
-| W01 | Switch HTTP client | C01, H00 | M | T7 (client half) | todo | |
+| W01 | Switch HTTP client | C01, H00 | M | T7 (client half) | done | PROVISIONAL (H00 not run): Switch client, agent+Slack paths, reply/edit status modes, dry run (T7 client half). |
 | D01 | Demo agent with switchable bugs | C01 | M | – | todo | |
 | P01 | Incident record writer | C01 | S | T18 | done | Incident record renderer + JSONL appender; missing optionals render as —. |
 | E00 | Detector: rolling trace window | C01 | S | – | done | TraceWindow: 30 s poll overlap, running-trace refetch, 60-min drop, finished traces not refetched. |
