@@ -24,12 +24,13 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, asdict
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol
 
 from mcp.server.mcpserver import MCPServer
 
 from tripwire.containment.client import ContainmentHTTPClient
-from tripwire.contracts.config import load_config, resolve_secret
+from tripwire.contracts.config import ConfigError, TripwireConfig, load_config, resolve_secret
 from tripwire.contracts.models import ACTIONS, Incident, Trace, incident_to_dict
 from tripwire.contracts.ports import Clock, ContainmentRefused
 from tripwire.langfuse_client import LangfuseClient
@@ -262,6 +263,51 @@ def build_server(tools: TripwireTools) -> MCPServer:
     return server
 
 
+def build_fix_pr(cfg: TripwireConfig, environ: dict[str, str], containment: AgentContainment) -> FixPr | None:
+    """The fix-PR tool, or None when its repo settings or its token are missing. A missing piece is logged, not raised."""
+    # Imported here: tripwire_agent/tools/open_fix_pr.py imports this module for cap_text.
+    from tripwire_agent.tools.open_fix_pr import FixPrTool, GitHubPulls, GitRepo
+
+    settings = cfg.fix_pr
+    missing = [
+        f"fix_pr.{name}"
+        for name, value in (
+            ("repo_path", settings.repo_path),
+            ("github_owner", settings.github_owner),
+            ("github_repo", settings.github_repo),
+        )
+        if not value
+    ]
+    if missing:
+        logger.warning("fix-PR tool is off: set %s in the config", ", ".join(missing))
+        return None
+    try:
+        token = resolve_secret(cfg, "github_token", environ)
+    except ConfigError as exc:
+        logger.warning("fix-PR tool is off: %s", exc)
+        return None
+    return FixPrTool(
+        containment,
+        GitRepo(Path(settings.repo_path), base=settings.base_branch),
+        GitHubPulls(token=token, owner=settings.github_owner, repo=settings.github_repo),
+    )
+
+
+def build_tools(
+    cfg: TripwireConfig,
+    environ: dict[str, str],
+    containment: AgentContainment,
+    traces: TraceSource,
+) -> TripwireTools:
+    """The tool bodies `main()` serves, with the fix-PR tool built from config when it is set up."""
+    return TripwireTools(
+        containment,
+        traces,
+        SystemClock(),
+        fix_pr=build_fix_pr(cfg, environ, containment),
+    )
+
+
 def main() -> None:
     """Serve the tools over MCP stdio. stdout carries the protocol, so logs go to stderr."""
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
@@ -272,7 +318,7 @@ def main() -> None:
         resolve_secret(cfg, "langfuse_public_key"),
         resolve_secret(cfg, "langfuse_secret_key"),
     )
-    build_server(TripwireTools(containment, traces, SystemClock())).run("stdio")
+    build_server(build_tools(cfg, dict(os.environ), containment, traces)).run("stdio")
 
 
 if __name__ == "__main__":

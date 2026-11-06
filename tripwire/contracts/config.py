@@ -55,12 +55,25 @@ class TripwireGuardConfig(_Strict):
     max_minutes: float = Field(3, gt=0)
 
 
+class FixPrConfig(_Strict):
+    """Where the fix-PR tool branches and which GitHub repo it opens pull requests against.
+
+    An empty `repo_path`, `github_owner` or `github_repo` turns the tool off; the tool then refuses.
+    """
+
+    repo_path: str = ""
+    github_owner: str = ""
+    github_repo: str = ""
+    base_branch: str = Field("main", min_length=1)
+
+
 class SecretNames(_Strict):
     """Names of the env vars that hold each secret. The values never appear in the config."""
 
     langfuse_public_key: str = "LANGFUSE_PUBLIC_KEY"
     langfuse_secret_key: str = "LANGFUSE_SECRET_KEY"
     switch_token: str = "SWITCH_TOKEN"
+    github_token: str = "GITHUB_TOKEN"
 
 
 class TripwireConfig(_Strict):
@@ -77,6 +90,7 @@ class TripwireConfig(_Strict):
     routes: dict[str, RouteConfig] = Field(default_factory=lambda: {"order-lookup": RouteConfig()})
     auto_pause: AutoPauseConfig = Field(default_factory=AutoPauseConfig)
     tripwire_guard: TripwireGuardConfig = Field(default_factory=TripwireGuardConfig)
+    fix_pr: FixPrConfig = Field(default_factory=FixPrConfig)
     owners: list[str] = Field(default_factory=lambda: ["jason"], min_length=1)
     room: str = "agent-incidents"
     secrets: SecretNames = Field(default_factory=SecretNames)

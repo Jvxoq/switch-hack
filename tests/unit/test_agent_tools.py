@@ -18,6 +18,7 @@ import pytest
 import yaml
 from mcp import Client
 
+from tripwire.contracts.config import TripwireConfig, load_config_dict
 from tripwire.contracts.models import Incident, Observation, Trace
 from tripwire.contracts.ports import ContainmentRefused
 from tripwire_agent.server import (
@@ -27,10 +28,13 @@ from tripwire_agent.server import (
     MAX_TOOL_TEXT_CHARS,
     TripwireTools,
     build_server,
+    build_tools,
     register,
 )
+from tripwire_agent.tools.open_fix_pr import GitHubPulls, GitRepo
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PR_URL = "https://github.com/acme/app/pull/7"
 T0 = datetime(2026, 11, 6, 12, 0, tzinfo=UTC)
 TOOL_NAMES = {
     "langfuse_read",
@@ -424,3 +428,113 @@ def test_mcp_call_hits_server_budget(tools: TripwireTools) -> None:
     results = asyncio.run(_call_flags_read(tools, 21))
 
     assert [r == BUDGET_SPENT for r in results] == [False] * 20 + [True]
+
+
+def fix_pr_config(**settings: str) -> TripwireConfig:
+    """A config with the test repo's fix-PR settings, each field overridable by keyword."""
+    values = {"repo_path": "/srv/app", "github_owner": "acme", "github_repo": "app", "base_branch": "develop"} | settings
+    return load_config_dict({"fix_pr": values})
+
+
+class FixPrCalls:
+    """What the fix-PR tool sent out: the pushed branches and the pull-request calls."""
+
+    def __init__(self) -> None:
+        self.pushed: list[tuple[str, str, str]] = []
+        self.pulls: list[dict[str, str]] = []
+
+
+@pytest.fixture
+def fix_pr_calls(monkeypatch: pytest.MonkeyPatch) -> FixPrCalls:
+    """Fake the two outbound effects of the fix-PR tool: the git push and the GitHub pull-request call."""
+    calls = FixPrCalls()
+
+    def push(self: GitRepo, branch: str, patch: str, message: str) -> None:
+        calls.pushed.append((branch, patch, message))
+
+    def open_pull(self: GitHubPulls, *, title: str, head: str, base: str, body: str) -> str:
+        calls.pulls.append(
+            {"title": title, "head": head, "base": base, "token": self.token, "repo": f"{self.owner}/{self.repo}"}
+        )
+        return PR_URL
+
+    monkeypatch.setattr(GitRepo, "push_patch_branch", push)
+    monkeypatch.setattr(GitHubPulls, "open_pull", open_pull)
+    return calls
+
+
+def test_fix_pr_opens_pr_from_config(service: FakeContainment, fix_pr_calls: FixPrCalls) -> None:
+    """A tool server built from config serves a working open_fix_pr over MCP."""
+    tools = build_tools(fix_pr_config(), {"GITHUB_TOKEN": "test-token"}, service, FakeTraces(make_trace()))
+
+    results = asyncio.run(_call_open_fix_pr(tools, 1))
+
+    assert results == [f"PR opened: {PR_URL}"]
+
+
+def test_fix_pr_pushes_branch_to_configured_base(service: FakeContainment, fix_pr_calls: FixPrCalls) -> None:
+    """The fix branch is cut from the configured base branch and carries the patch."""
+    tools = build_tools(fix_pr_config(), {"GITHUB_TOKEN": "test-token"}, service, FakeTraces(make_trace()))
+
+    tools.open_fix_pr("INC-1", "Stop loop", PATCH)
+
+    assert (fix_pr_calls.pushed, fix_pr_calls.pulls[0]["head"], fix_pr_calls.pulls[0]["base"]) == (
+        [("tripwire/INC-1", PATCH, "INC-1: Stop loop")],
+        "tripwire/INC-1",
+        "develop",
+    )
+
+
+def test_fix_pr_uses_token_from_env(service: FakeContainment, fix_pr_calls: FixPrCalls) -> None:
+    """The GitHub call goes to the configured repo with the token read from the environment."""
+    tools = build_tools(fix_pr_config(), {"GITHUB_TOKEN": "test-token"}, service, FakeTraces(make_trace()))
+
+    tools.open_fix_pr("INC-1", "Stop loop", PATCH)
+
+    assert (fix_pr_calls.pulls[0]["token"], fix_pr_calls.pulls[0]["repo"]) == ("test-token", "acme/app")
+
+
+def test_fix_pr_records_pr_url(service: FakeContainment, fix_pr_calls: FixPrCalls) -> None:
+    """The opened PR's URL is stored on the incident through the containment service."""
+    tools = build_tools(fix_pr_config(), {"GITHUB_TOKEN": "test-token"}, service, FakeTraces(make_trace()))
+
+    tools.open_fix_pr("INC-1", "Stop loop", PATCH)
+
+    assert service.writes == [("update", "INC-1", {"pr_url": PR_URL})]
+
+
+@pytest.mark.parametrize(
+    ("settings", "environ"),
+    [
+        pytest.param({"repo_path": ""}, {"GITHUB_TOKEN": "test-token"}, id="no-repo-path"),
+        pytest.param({"github_owner": ""}, {"GITHUB_TOKEN": "test-token"}, id="no-owner"),
+        pytest.param({"github_repo": ""}, {"GITHUB_TOKEN": "test-token"}, id="no-repo-name"),
+        pytest.param({}, {}, id="no-token"),
+    ],
+)
+def test_fix_pr_refused_when_unset(
+    service: FakeContainment, fix_pr_calls: FixPrCalls, settings: dict[str, str], environ: dict[str, str]
+) -> None:
+    """A missing repo setting or token turns the fix-PR tool off: it refuses and sends nothing."""
+    tools = build_tools(fix_pr_config(**settings), environ, service, FakeTraces(make_trace()))
+
+    result = tools.open_fix_pr("INC-1", "Stop loop", PATCH)
+
+    assert (result, fix_pr_calls.pushed, fix_pr_calls.pulls) == (
+        "refused: the fix-PR tool is not configured",
+        [],
+        [],
+    )
+
+
+def test_fix_pr_refusal_logs_missing_setting(
+    service: FakeContainment, fix_pr_calls: FixPrCalls, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An operator sees in the server log which fix-PR setting is missing."""
+    caplog.set_level(logging.WARNING, logger="tripwire_agent.server")
+
+    build_tools(fix_pr_config(github_owner="", github_repo=""), {"GITHUB_TOKEN": "test-token"}, service, FakeTraces(make_trace()))
+
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        ("WARNING", "fix-PR tool is off: set fix_pr.github_owner, fix_pr.github_repo in the config"),
+    ]

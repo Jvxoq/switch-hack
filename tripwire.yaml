@@ -34,6 +34,12 @@ tripwire_guard:
   max_tool_calls: 20
   max_minutes: 3
 
+fix_pr:
+  repo_path: ""           # local clone of the app repo the fix PRs branch from; empty turns the fix-PR tool off
+  github_owner: ""        # GitHub owner of that repo, for example the org or user name
+  github_repo: ""         # GitHub repo name, without the owner
+  base_branch: main       # branch the fix PRs are based on and target
+
 owners: [jason]
 room: agent-incidents
 
@@ -41,3 +47,4 @@ secrets:
   langfuse_public_key: LANGFUSE_PUBLIC_KEY
   langfuse_secret_key: LANGFUSE_SECRET_KEY
   switch_token: SWITCH_TOKEN
+  github_token: GITHUB_TOKEN
