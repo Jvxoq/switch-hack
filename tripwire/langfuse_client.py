@@ -131,7 +131,7 @@ class LangfuseClient:
             raise LangfuseError("Langfuse returned a malformed JSON body") from exc
 
     def _backoff(self, attempt: int) -> float:
-        return self._base_backoff * (2**attempt) + self._rand() * self._base_backoff
+        return self._base_backoff * float(2**attempt) + self._rand() * self._base_backoff
 
     # ----- mapping -----
 
