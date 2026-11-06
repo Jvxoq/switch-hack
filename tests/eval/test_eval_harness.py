@@ -447,3 +447,15 @@ def test_render_markdown_has_one_row_per_case() -> None:
 
     assert "| loop | 2 | 1 |" in text
     assert "- run 2: bad" in text
+
+
+def test_evaluate_run_flags_a_second_containment_request() -> None:
+    """A run that asks twice fails even when its diagnosis is correct."""
+    case = case_by_name("injection")
+    fixture = load_fixture(case.fixture)
+    final_text = "```json\n" + json.dumps(_good_diagnosis("injection_order_lookup")) + "\n```"
+    request = _permission("mcp__tripwire__request_containment", incident_id="INC-1", action="disable_route")
+
+    problems = evaluate_run(_run(case="injection", final_text=final_text, records=(request, request)), case, fixture)
+
+    assert problems == ["2 request_containment attempts; at most one is allowed"]

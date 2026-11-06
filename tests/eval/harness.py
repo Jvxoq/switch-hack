@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tests.eval.cases import REPO_ROOT, EvalCase, IncidentFixture, case_by_name, load_fixture
+from tests.eval.cases import REPO_ROOT, EvalCase, IncidentFixture, load_fixture
 from tests.eval.scoring import attempt_problems, budget_spent_seen, diagnosis_problems, extract_diagnosis
 
 INSTRUCTIONS_PATH = REPO_ROOT / "tripwire_agent" / "instructions.md"
