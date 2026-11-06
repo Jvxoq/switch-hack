@@ -1,0 +1,178 @@
+{
+  "description": "One running trace has spent 1.40 USD, above the per-trace limit, while its route baseline is about 0.02 USD.",
+  "rule": "cost_spike",
+  "route": "order-lookup",
+  "incident_id": "INC-1",
+  "opened_at": "2026-11-06T12:05:00+00:00",
+  "trigger_trace_id": "tr-cost-1",
+  "traces": [
+    {
+      "id": "tr-base-1",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T11:30:00+00:00",
+      "end_time": "2026-11-06T11:30:30+00:00",
+      "total_cost_usd": 0.02,
+      "observations": [
+        {
+          "id": "base-o1",
+          "trace_id": "tr-base-1",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "B-1"
+          },
+          "output": "status: shipped",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T11:30:00+00:00",
+          "cost_usd": 0.02
+        }
+      ]
+    },
+    {
+      "id": "tr-base-2",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T11:35:00+00:00",
+      "end_time": "2026-11-06T11:35:30+00:00",
+      "total_cost_usd": 0.02,
+      "observations": [
+        {
+          "id": "base-o2",
+          "trace_id": "tr-base-2",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "B-2"
+          },
+          "output": "status: shipped",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T11:35:00+00:00",
+          "cost_usd": 0.02
+        }
+      ]
+    },
+    {
+      "id": "tr-base-3",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T11:40:00+00:00",
+      "end_time": "2026-11-06T11:40:30+00:00",
+      "total_cost_usd": 0.02,
+      "observations": [
+        {
+          "id": "base-o3",
+          "trace_id": "tr-base-3",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "B-3"
+          },
+          "output": "status: shipped",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T11:40:00+00:00",
+          "cost_usd": 0.02
+        }
+      ]
+    },
+    {
+      "id": "tr-base-4",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T11:45:00+00:00",
+      "end_time": "2026-11-06T11:45:30+00:00",
+      "total_cost_usd": 0.02,
+      "observations": [
+        {
+          "id": "base-o4",
+          "trace_id": "tr-base-4",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "B-4"
+          },
+          "output": "status: shipped",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T11:45:00+00:00",
+          "cost_usd": 0.02
+        }
+      ]
+    },
+    {
+      "id": "tr-base-5",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T11:50:00+00:00",
+      "end_time": "2026-11-06T11:50:30+00:00",
+      "total_cost_usd": 0.02,
+      "observations": [
+        {
+          "id": "base-o5",
+          "trace_id": "tr-base-5",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "B-5"
+          },
+          "output": "status: shipped",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T11:50:00+00:00",
+          "cost_usd": 0.02
+        }
+      ]
+    },
+    {
+      "id": "tr-base-6",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T11:55:00+00:00",
+      "end_time": "2026-11-06T11:55:30+00:00",
+      "total_cost_usd": 0.02,
+      "observations": [
+        {
+          "id": "base-o6",
+          "trace_id": "tr-base-6",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "B-6"
+          },
+          "output": "status: shipped",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T11:55:00+00:00",
+          "cost_usd": 0.02
+        }
+      ]
+    },
+    {
+      "id": "tr-cost-1",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T12:04:00+00:00",
+      "end_time": null,
+      "total_cost_usd": 1.4,
+      "observations": [
+        {
+          "id": "cost-o1",
+          "trace_id": "tr-cost-1",
+          "type": "GENERATION",
+          "name": "llm_call",
+          "input": {
+            "order_id": "C-7"
+          },
+          "output": "order status: pending",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:04:00+00:00",
+          "cost_usd": 1.4
+        }
+      ]
+    }
+  ]
+}
