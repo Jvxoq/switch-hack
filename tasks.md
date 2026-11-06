@@ -186,7 +186,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 
 | ID | Task | Deps | Size | Tests | Status | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| C01 | Scaffold, contracts, fakes | – | M | – | todo | |
+| C01 | Scaffold, contracts, fakes | – | M | – | done | Scaffold, contracts, config loader, ports and in-memory fakes pushed; suite green. |
 | C02 | Switch API research → `docs/switch-api.md` | – | S | – | todo | |
 | H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | todo | H |
 | R01 | Loop rule | C01 | S | T1, T2 | todo | |
