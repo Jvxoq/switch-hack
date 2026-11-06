@@ -203,7 +203,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | E03 | Detector: verify, resolve, reopen | C01 | S | T17 | done | Verifier: verifying/resolve/reopen, disabled-route status, handoff record (T17); E04 must call on_handed_off. |
 | E04 | Detector main loop + wiring | E00, E01, E02, E03, L01, W01, P01, S01 | M | – | todo | |
 | I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | done | T11: real containment service over HTTP drives demo agent disable_route stop. |
-| A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | done | Tool server w/ server-side call+time budget (T16), room template, instructions. PROVISIONAL (H00). Follow-up A01b: MCP stdio transport + lock test. |
+| A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | done | Tool server w/ server-side call+time budget (T16), room template, instructions; MCP stdio via python -m tripwire_agent.server (A01b); T16 lock-sensitive. PROVISIONAL (H00). |
 | A02 | Fix-PR tool | A01 | S | T15 | todo | |
 | A03 | Agent evals + eval runner | A01 | M | T13, T16, T19 | todo | |
 | K01 | Docker Compose + self-hosted Langfuse | E04, S01, D01 | M | – | todo | |
