@@ -165,11 +165,14 @@ class TripwireTools:
 
         with self._lock:
             budget = self._budget_for(incident_id, incident.ask_round)
+            # The count is read, the clock is called, then the count is written. The lock keeps that
+            # read-modify-write whole: without it, threads that interleave here all see the same count.
+            calls = budget.calls + 1
             now = self._clock.now()
+            budget.calls = calls
             if budget.started_at is None:
                 budget.started_at = now
-            budget.calls += 1
-            over = budget.calls > MAX_CALLS_PER_ROUND or now - budget.started_at >= MAX_ROUND_DURATION
+            over = calls > MAX_CALLS_PER_ROUND or now - budget.started_at >= MAX_ROUND_DURATION
             if over and budget.spent:
                 return BUDGET_SPENT
             if over:

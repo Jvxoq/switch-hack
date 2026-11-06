@@ -51,10 +51,14 @@ class FakeClock:
 
 
 class YieldingClock(FakeClock):
-    """Yields the GIL inside the guard's critical section, so unlocked counting would lose updates."""
+    """Sleeps inside the guard's critical section, so threads without the lock read the same count.
+
+    The guard calls the clock between reading and writing the call count. The sleep lets other
+    threads run there. With the lock in place they wait their turn; without it they all read 0.
+    """
 
     def now(self) -> datetime:
-        time.sleep(0)
+        time.sleep(0.001)
         return super().now()
 
 
