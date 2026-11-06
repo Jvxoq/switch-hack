@@ -205,7 +205,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | done | T11: real containment service over HTTP drives demo agent disable_route stop. |
 | A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | done | Tool server w/ server-side call+time budget (T16), room template, instructions; MCP stdio via python -m tripwire_agent.server (A01b); T16 lock-sensitive. PROVISIONAL (H00). |
 | A02 | Fix-PR tool | A01 | S | T15 | done | Fix-PR tool: branch, commit, open PR, store pr_url; never approves/merges (T15). Registered in tool server via C-FIX3. |
-| A03 | Agent evals + eval runner | A01 | M | T13, T16, T19 | todo | |
+| A03 | Agent evals + eval runner | A01 | M | T13, T16, T19 | done | Eval harness, recorded incidents, offline tests (T13,T16,T19 offline parts); 5 paid evals skip without key — X01 runs them. |
 | K01 | Docker Compose + self-hosted Langfuse | E04, S01, D01 | M | – | todo | |
 | H01 | Switch room setup: template, allowed senders (human) | A01, H00 | S | – | todo | H |
 | H02 | Live Switch tests + E2E script | K01, H01, A02 | M | T14, T20 | todo | H |
