@@ -190,8 +190,8 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | C02 | Switch API research → `docs/switch-api.md` | – | S | – | done | Switch API facts doc (unknowns marked UNCONFIRMED) + scripts/switch_spike.py; no live calls. |
 | H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | blocked | H — waiting on human: run scripts/switch_spike.py per H00 checklist. |
 | R01 | Loop rule | C01 | S | T1, T2 | todo | |
-| R02 | Silent-error rule | C01 | S | T3 | todo | |
-| R03 | Cost-spike rule | C01 | S | T4 | todo | |
+| R02 | Silent-error rule | C01 | S | T3 | done | Silent-error rule: 3 non-ERROR matches in 5 min per route (report lost in restart; T3 green). |
+| R03 | Cost-spike rule | C01 | S | T4 | done | Cost-spike rule vs per-route hourly median baseline (report lost in restart; T4 green). |
 | S01 | Containment service + incident store | C01 | M | T10, T12 | todo | |
 | L01 | Langfuse HTTP client | C01 | M | – | todo | |
 | W01 | Switch HTTP client | C01, H00 | M | T7 (client half) | todo | |
