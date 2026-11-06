@@ -202,7 +202,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | todo | |
 | E03 | Detector: verify, resolve, reopen | C01 | S | T17 | done | Verifier: verifying/resolve/reopen, disabled-route status, handoff record (T17); E04 must call on_handed_off. |
 | E04 | Detector main loop + wiring | E00, E01, E02, E03, L01, W01, P01, S01 | M | – | todo | |
-| I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | todo | |
+| I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | done | T11: real containment service over HTTP drives demo agent disable_route stop. |
 | A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | todo | |
 | A02 | Fix-PR tool | A01 | S | T15 | todo | |
 | A03 | Agent evals + eval runner | A01 | M | T13, T16, T19 | todo | |
