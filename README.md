@@ -50,7 +50,7 @@ uv run --env-file .env python -m tripwire.detector --config tripwire.yaml
 In a second terminal, start a demo incident. `DEMO_BUG` can be `loop`, `silent_error` or `cost_spike`.
 
 ```bash
-docker compose run --rm -e DEMO_BUG=loop demo-agent
+DEMO_BUG=loop docker compose run --rm demo-agent
 ```
 
 An alert appears in the room within about 15 seconds. The Langfuse UI is at http://127.0.0.1:3000.
@@ -61,4 +61,6 @@ An alert appears in the room within about 15 seconds. The Langfuse UI is at http
 uv run pytest -q -m "not eval and not switch"
 ```
 
-The paid model evals need `ANTHROPIC_API_KEY` and run with `scripts/run_evals.sh --runs 5`. Configuration options are in `tripwire.yaml`, and environment variables are in `.env.example`.
+Together AI powers only the demo agent. The paid evals test the Tripwire agent itself, which runs on Claude Code, so they need `ANTHROPIC_API_KEY` and the `claude` CLI. Run them with `scripts/run_evals.sh --runs 5`.
+
+Configuration options are in `tripwire.yaml`, and environment variables are in `.env.example`.
