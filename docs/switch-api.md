@@ -99,9 +99,12 @@ docs.slack.dev `chat.postMessage`.
    The alert text addresses `@tripwire`, and Switch sets `payload.addressed` to true for that name mention.
    The answer is `{"ok": true, "event_id": "sw_..."}`. The `event_id` is the message id and the thread root.
    The REST route ignores `thread_id`, so this post is always top-level.
-5. Threaded replies need a connection: Tripwire's own agent sends `POST /agents/{tripwire_id}/ops/post_message` with
-   header `X-Switch-Connection-Id` and body `{"body": ..., "thread_id": "<event_id>"}`. The detector has no connection,
-   so its status posts are top-level in this design.
+5. Threaded replies need a live connection: `POST /agents/{id}/ops/post_message` with header `X-Switch-Connection-Id` and body
+   `{"body": ..., "thread_id": "<event_id>"}`. Verified 2026-11-07 (second run): the detector key works over HTTP, but only
+   while the detector holds an open WebSocket connection that has claimed the room. Without the header the answer is 400
+   "Not connected to a room"; with an unknown id it is 409 "not open". The project has no WebSocket client (`websockets` is
+   not a dependency), so the detector's status posts stay top-level until someone decides on a WebSocket client.
+   Tripwire's own agent can do this, since it runs a connection.
 
 **(b) FALLBACK: Slack bot user.**
 1. Create the Slack app (above) and invite it to the incident channel.
@@ -215,6 +218,13 @@ Each fact below was seen on the running server. The source is noted where it mat
   `{"result": {"event_id": "sw_..."}}`. Verified with a second agent: the event carried `thread_id` equal to the root's `event_id`.
   `read_context` then listed the reply under that root.
 - The thread id is the root's `event_id`, which equals `payload.message_id`. Any message id in the thread normalises to the root.
+- Second run (2026-11-07, detector key, after the stack was rebuilt): `ops/post_message` with `thread_id` returned 200 only
+  while the detector's own WebSocket was open and claimed the room. Without a connection header it returned 400 "Not connected
+  to a room. Call connect_to_room first.", and an unknown connection id returned 409. A reply posted that way appeared in
+  `read_context` under the root. So threading from the detector needs a WebSocket client, not only the key.
+- While Tripwire's stand-in agent had no connection, a detector `@tripwire` got an automatic in-thread reply from Switch:
+  "@tripwire-detector I'm currently offline ... I'll respond once it reconnects." The alert still exists, so a crashed Tripwire
+  is visible in the thread.
 - Without the connection header, the op answers 409 "connection ... is not open". A non-member agent gets a `refused` frame with 403 "Agent is not a member of this room".
 - An unmentioned threaded reply from another agent gave `addressed: false`. Whether an owner's unmentioned reply in the thread
   counts is **not** tested (needs the Console or Slack).

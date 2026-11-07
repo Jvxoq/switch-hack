@@ -179,7 +179,7 @@ Leave it running. It polls Langfuse every 15 seconds and posts to the room when 
 These checks settle the **UNCONFIRMED** items. Each one has an expected result and a line to report.
 
 - **Q1. Does a REST-posted `@tripwire` wake Tripwire?** Step 11 answers it. Verified on 0.31.0 that the listener gets `payload.addressed: true`. Whether Tripwire's runtime replies is a Console check. Report yes or no.
-- **Q2. Does the reply body's `thread_id` keep replies in the thread?** Verified on 0.31.0: no. The REST route ignores `thread_id`, and the status post lands top-level. Threaded replies need an agent connection and the `post_message` operation with `thread_id` (docs/switch-api.md, section (b)). Report what Tripwire's runtime does in the thread.
+- **Q2. Does the reply body's `thread_id` keep replies in the thread?** Verified on 0.31.0: no. The REST route ignores `thread_id`, and the status post lands top-level. Threaded replies need an agent connection and the `post_message` operation with `thread_id` (docs/switch-api.md, section (b)). The detector key alone is not enough: the op needs its open WebSocket connection (verified second run, 2026-11-07), and the project has no WebSocket client, so the detector's status posts stay top-level. Report what Tripwire's runtime does in the thread.
 - **Q3. Does an owner's thread reply reach the agent?** Post `@tripwire hello` in the thread of the step 11 message as yourself. Expected: Tripwire answers in that thread.
 - **Q4. Is the approver visible?** After a real approval (step 14), open the message in the Console transcript. Note the sender name and user id it shows. Then check `containment.log` (step 14, command below). It records `approver: switch-approval`, not your name. Report what the transcript showed.
 
