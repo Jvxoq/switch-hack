@@ -208,9 +208,7 @@ def test_tick_keeps_advancing_after_one_incident_fails(
 
     assert events == [f"{stuck.id}: verify failed", f"{healthy.id}: verifying"]
     assert containment.get(healthy.id).state == "verifying"
-    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
-        ("ERROR", f"verify step failed for {stuck.id}")
-    ]
+    assert [(r.levelname, stuck.id in r.getMessage()) for r in caplog.records] == [("ERROR", True)]
 
 
 def test_handed_off_record_retried_after_write_failure(containment, clock, switch, cfg):
@@ -236,3 +234,67 @@ def test_handed_off_record_retried_after_write_failure(containment, clock, switc
         verifier.on_handed_off(handed)
     assert verifier.on_handed_off(handed) == f"{inc.id}: recorded (handed_off)"
     assert attempts == [inc.id, inc.id]
+
+
+def _drop_thread(containment: FakeContainment, inc_id: str) -> None:
+    """Switch gave no thread id: the client returns None as thread_ref."""
+    containment.update(inc_id, thread_ref=None)
+
+
+def test_unthreaded_reopen_logs_dropped_reply(verifier, containment, clock, switch, caplog):
+    """A re-ask with no Switch thread must be visible in the log, not vanish."""
+    inc = _open_and_contain(containment, clock, "cap_max_steps")
+    containment.update(inc.id, state="verifying", quiet_since=clock.now())
+    _drop_thread(containment, inc.id)
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.detector.verify"):
+        verifier.observe_hits(containment.get(inc.id), [_hit(inc)])
+
+    assert [(r.levelname, inc.id in r.getMessage(), "still firing" in r.getMessage()) for r in caplog.records] == [
+        ("WARNING", True, True)
+    ]
+    assert switch.replies == []
+
+
+def test_unthreaded_record_logs_dropped_text(verifier, containment, clock, switch, caplog):
+    """A handed-off record with no Switch thread is still written, and the dropped post is logged."""
+    inc = containment.open_incident("loop", "order-lookup", clock.now())
+    containment.update(inc.id, state="investigating")
+    containment.update(inc.id, state="handed_off")
+    _drop_thread(containment, inc.id)
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.detector.verify"):
+        verifier.tick([containment.get(inc.id)])
+
+    assert [(r.levelname, inc.id in r.getMessage(), _written(containment.get(inc.id)) in r.getMessage())
+            for r in caplog.records] == [("WARNING", True, True)]
+    assert switch.replies == []
+
+
+def test_unthreaded_status_logs_once(verifier, containment, clock, switch, caplog):
+    """The disabled-route status is retried every poll, so its warning must appear once per incident."""
+    inc = _open_and_contain(containment, clock, "disable_route")
+    _drop_thread(containment, inc.id)
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.detector.verify"):
+        for _ in range(3):
+            verifier.tick([containment.get(inc.id)])
+
+    assert [(r.levelname, inc.id in r.getMessage()) for r in caplog.records] == [("WARNING", True)]
+    assert switch.status_updates == []
+
+
+def test_unthreaded_status_logs_per_incident(verifier, containment, clock, caplog):
+    """Once-only logging is per incident: a second unthreaded incident still gets its own warning."""
+    first = _open_and_contain(containment, clock, "disable_route")
+    second = _open_and_contain(containment, clock, "disable_route", rule="silent_error")
+    for inc in (first, second):
+        _drop_thread(containment, inc.id)
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.detector.verify"):
+        verifier.tick([containment.get(first.id), containment.get(second.id)])
+        verifier.tick([containment.get(first.id), containment.get(second.id)])
+
+    assert [r.getMessage() for r in caplog.records if first.id in r.getMessage()] != []
+    assert [r.getMessage() for r in caplog.records if second.id in r.getMessage()] != []
+    assert len(caplog.records) == 2

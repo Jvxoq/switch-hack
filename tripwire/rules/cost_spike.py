@@ -1,4 +1,4 @@
-"""Cost-spike rule (R03).
+"""Cost-spike rule.
 
 Per route, the baseline is the rolling median of `total_cost_usd` over traces that started in the last hour,
 excluding the candidate trace itself. A trace fires when either:

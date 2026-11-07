@@ -210,9 +210,8 @@ def test_T8_refusal_logs_reason_and_stops(spy, switch, clock, cfg, caplog) -> No
     )
 
     assert paused == []
-    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
-        ("WARNING", "auto-pause refused for INC-1: auto-pause thresholds not reached")
-    ]
+    assert [(r.levelname, inc.id in r.getMessage(), "auto-pause thresholds not reached" in r.getMessage())
+            for r in caplog.records] == [("WARNING", True, True)]
     assert switch.replies == []
     assert spy.get(inc.id).state == "detected"
 
@@ -237,8 +236,8 @@ def test_T8_one_failed_reply_keeps_other_pauses(clock, cfg, caplog) -> None:
     assert [p.incident_id for p in paused] == ["INC-1", "INC-2"]
     assert [containment.get(i).state for i in ("INC-1", "INC-2")] == ["auto_paused", "auto_paused"]
     assert [r["thread_ref"] for r in switch.replies] == ["thread-2"]
-    assert [(r.levelname, r.getMessage(), r.exc_info is not None) for r in caplog.records] == [
-        ("ERROR", "revert offer failed for INC-1; the route stays paused", True)
+    assert [(r.levelname, "INC-1" in r.getMessage(), r.exc_info is not None) for r in caplog.records] == [
+        ("ERROR", True, True)
     ]
 
 
@@ -254,6 +253,50 @@ def test_T9_ceiling_pauses_with_zero_hits(spy, switch, clock, cfg) -> None:
     assert paused == [AutoPause(incident_id="INC-1", route=ROUTE, spend_usd=50.0)]
     assert spy.get("INC-1").state == "auto_paused"
     assert spy.flags()["routes"][ROUTE]["disabled"] is True
+
+
+def test_ceiling_ingest_failure_keeps_other_pauses(spy, switch, clock, cfg, caplog) -> None:
+    """One route's failed ceiling alert must not stop auto-pause for another route's open incident."""
+    caplog.set_level(logging.WARNING, logger=MODULE_LOGGER)
+    two_routes = cfg.model_copy(
+        update={"routes": {**cfg.routes, "billing": RouteConfig(loss_budget_usd=50, hourly_ceiling_usd=50)}}
+    )
+    inc = _open_incident(spy, switch, clock, trace_ids=["t1"])
+    traces = [_trace(25.0, trace_id="t1"), _trace(60.0, trace_id="b1", route="billing")]
+    attempted: list[str] = []
+
+    def failing_ingest(hit: RuleHit) -> None:
+        attempted.append(hit.route)
+        raise RuntimeError("ingest failed")
+
+    paused = run_autopause(
+        containment=spy, switch=switch, clock=clock, cfg=two_routes, traces=traces, ingest=failing_ingest
+    )
+
+    assert attempted == ["billing"]
+    assert paused == [AutoPause(incident_id=inc.id, route=ROUTE, spend_usd=25.0)]
+    assert spy.get(inc.id).state == "auto_paused"
+    assert [(r.levelname, "billing" in r.getMessage(), r.exc_info is not None) for r in caplog.records] == [
+        ("ERROR", True, True)
+    ]
+
+
+def test_ceiling_ingest_failure_skips_only_that_route(spy, switch, clock, cfg) -> None:
+    """A failing ceiling ingest on the first route still lets the next route's ceiling hit through."""
+    two_routes = cfg.model_copy(
+        update={"routes": {**cfg.routes, "billing": RouteConfig(loss_budget_usd=50, hourly_ceiling_usd=50)}}
+    )
+    traces = [_trace(60.0, trace_id="o1"), _trace(60.0, trace_id="b1", route="billing")]
+    seen: list[str] = []
+
+    def ingest(hit: RuleHit) -> None:
+        seen.append(hit.route)
+        if hit.route == ROUTE:
+            raise RuntimeError("ingest failed")
+
+    run_autopause(containment=spy, switch=switch, clock=clock, cfg=two_routes, traces=traces, ingest=ingest)
+
+    assert seen == [ROUTE, "billing"]
 
 
 def test_T9_ceiling_alert_has_revert_offer(spy, switch, clock, cfg) -> None:

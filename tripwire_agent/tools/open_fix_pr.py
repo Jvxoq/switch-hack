@@ -1,4 +1,4 @@
-"""Fix-PR tool: open a pull request with an incident's proposed patch (A02, tasks.md section 5).
+"""Fix-PR tool: open a pull request with an incident's proposed patch.
 
 The tool branches `tripwire/INC-<n>` off the base branch, commits the patch, pushes the branch, opens a pull
 request whose body links the incident, and stores the PR URL with `update_incident(pr_url=...)`. It never asks
@@ -118,9 +118,23 @@ class GitRepo:
             try:
                 self._git(tree, "apply", "--index", stdin=patch.encode())
                 self._git(tree, "commit", "--quiet", "-m", message)
-                self._git(tree, "push", "--quiet", self._remote, f"{branch}:refs/heads/{branch}")
+                self._git(tree, "push", "--quiet", *self._lease(tree, branch), self._remote, f"{branch}:refs/heads/{branch}")
             finally:
                 self._remove_worktree(tree)
+
+    def _lease(self, tree: Path, branch: str) -> list[str]:
+        """Push flags that may replace this tool's own branch, but only at the commit seen on the remote just now.
+
+        An earlier call can push the branch and then fail to open the PR. The retry commits fresh off the base,
+        so a plain push would be rejected as non-fast-forward. The lease still refuses if someone else moved the
+        branch since we looked.
+        """
+        ref = f"refs/heads/{branch}"
+        listing = self._git(tree, "ls-remote", "--heads", self._remote, ref).strip()
+        if not listing:
+            return []
+        remote_sha = listing.split()[0]
+        return [f"--force-with-lease={ref}:{remote_sha}"]
 
     def _remove_worktree(self, tree: Path) -> None:
         try:
@@ -128,7 +142,7 @@ class GitRepo:
         except FixPrError as exc:
             logger.warning("could not remove fix worktree: %s", exc)
 
-    def _git(self, cwd: Path, verb: str, *args: str, stdin: bytes | None = None) -> None:
+    def _git(self, cwd: Path, verb: str, *args: str, stdin: bytes | None = None) -> str:
         env = {**os.environ, **GIT_IDENTITY, "GIT_TERMINAL_PROMPT": "0"}
         try:
             result = subprocess.run(
@@ -145,6 +159,7 @@ class GitRepo:
         if result.returncode != 0:
             detail = cap_text(result.stderr.decode(errors="replace").strip(), MAX_GIT_DETAIL_CHARS)
             raise FixPrError(f"git {verb} failed: {detail}")
+        return result.stdout.decode(errors="replace")
 
 
 class FixPrTool:

@@ -1,6 +1,6 @@
 """Containment service (`:8700`): the incident store and the only writer of `flags.json`.
 
-Section 3 of tasks.md is the contract. Route flags are derived from the active incident actions, never stored
+Route flags are derived from the active incident actions, never stored
 per incident. Every read-modify-write runs under one process-wide lock on a copy of the state, which is persisted
 before it is swapped in, so the service must run with a single worker. Handlers are plain `def` routes: they run
 in FastAPI's thread pool, and the lock is a `threading.Lock`.
@@ -24,7 +24,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tripwire.contracts.config import TripwireConfig, load_config
 from tripwire.clock import SystemClock
@@ -39,7 +39,7 @@ from tripwire.contracts.models import (
     incident_from_dict,
     incident_to_dict,
 )
-from tripwire.contracts.ports import Clock, ContainmentRefused
+from tripwire.contracts.ports import SWITCH_APPROVAL, Clock, ContainmentRefused
 
 RULES: tuple[str, ...] = get_args(RuleName)
 STATES: frozenset[str] = frozenset(get_args(IncidentState))
@@ -58,8 +58,34 @@ PATCHABLE: frozenset[str] = frozenset(
         "resolved_at",
     }
 )
-PATCH_DATETIME_FIELDS: frozenset[str] = frozenset({"quiet_since", "resolved_at"})
-SWITCH_APPROVAL = "switch-approval"
+
+
+class IncidentPatch(BaseModel):
+    """Value types PATCH accepts, matching the `Incident` fields. Strict, so "5" is not an int."""
+
+    model_config = ConfigDict(extra="forbid")
+    # Only the fields a caller sent are applied, so these defaults never reach an incident. They have no
+    # `| None`: an explicit null on state or a counter is refused.
+    state: IncidentState = "detected"
+    hit_count: Annotated[int, Field(strict=True)] = 0
+    trace_ids: Annotated[list[str], Field(strict=True)] = Field(default_factory=list)
+    cost_usd: Annotated[float, Field(strict=True)] = 0.0
+    thread_ref: Annotated[str, Field(strict=True)] | None = None
+    root_cause: Annotated[str, Field(strict=True)] | None = None
+    pr_url: Annotated[str, Field(strict=True)] | None = None
+    rejections: Annotated[int, Field(strict=True)] = 0
+    quiet_since: AwareDatetime | None = None  # ISO 8601 text or a datetime; a naive one is refused
+    resolved_at: AwareDatetime | None = None
+
+    @field_validator("quiet_since", "resolved_at", mode="before")
+    @classmethod
+    def _no_timestamps(cls, value: Any) -> Any:
+        """Pydantic reads an int as a Unix time. Only ISO text or a datetime is a valid value here."""
+        if value is not None and not isinstance(value, (str, datetime)):
+            raise ValueError("must be an ISO 8601 datetime string")
+        return value
+
+
 # Values the menu actions set. The config has no field for them, so they are fixed here.
 MAX_STEPS_CAP = 20
 FALLBACK_MODEL = "zai-org/GLM-5.3"  # a real Together model id: the demo agent calls Together with it as-is
@@ -163,8 +189,6 @@ class ContainmentStore:
         # Older state files may hold a "snapshots" key from the per-incident design. It is ignored.
         self._flags = self._derive(self._state)
 
-    # ---- incidents -------------------------------------------------------
-
     def open_incident(self, rule: str, route: str, opened_at: datetime) -> Incident:
         with self._lock:
             if rule not in RULES:
@@ -198,13 +222,12 @@ class ContainmentStore:
             for name in fields:
                 if name not in PATCHABLE:
                     raise Refused(f"field {name!r} cannot be changed with PATCH", 422)
-            new_state = fields.get("state")
+            patch = _validate_patch(fields)
+            new_state = patch.get("state")
             if new_state is not None and new_state != inc.state:
                 self._check_transition(inc, new_state)
-            for name, value in fields.items():
-                if name in PATCH_DATETIME_FIELDS and isinstance(value, str):
-                    value = _parse_datetime(name, value)
-                setattr(inc, name, deepcopy(value))
+            for name, value in patch.items():
+                setattr(inc, name, value)
             self._commit(new)
             return deepcopy(inc)
 
@@ -218,8 +241,6 @@ class ContainmentStore:
             inc.state = "awaiting_approval"
             self._commit(new)
             return deepcopy(inc)
-
-    # ---- actions ---------------------------------------------------------
 
     def apply(
         self,
@@ -285,7 +306,7 @@ class ContainmentStore:
         with self._lock:
             return self._flags_view()
 
-    # ---- helpers (call only with the lock held) --------------------------
+    # Helpers: call only with the lock held.
 
     def _require(self, state: _State, incident_id: str) -> Incident:
         inc = state.incidents.get(incident_id)
@@ -375,17 +396,14 @@ class ContainmentStore:
             handle.write(json.dumps(line, sort_keys=True) + "\n")
 
 
-def _parse_datetime(name: str, value: str) -> datetime:
+def _validate_patch(fields: dict[str, Any]) -> dict[str, Any]:
+    """Type-check PATCH values. An explicit None is kept, so it clears the field."""
     try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        raise Refused(f"{name} is not an ISO 8601 datetime", 422) from None
-    if parsed.tzinfo is None:
-        raise Refused(f"{name} must include a timezone", 422)
-    return parsed
-
-
-# ---- HTTP surface ---------------------------------------------------------
+        model = IncidentPatch.model_validate(fields)
+    except ValidationError as exc:
+        reason = "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors())
+        raise Refused(reason, 422) from None
+    return {name: getattr(model, name) for name in model.model_fields_set}
 
 
 class OpenIncidentBody(BaseModel):
@@ -396,7 +414,7 @@ class OpenIncidentBody(BaseModel):
 
 
 class ApplyBody(BaseModel):
-    # Extra keys (for example a caller-supplied opened_at) are ignored on purpose; see section 3.
+    # Extra keys (for example a caller-supplied opened_at) are ignored on purpose.
     incident_id: str
     action: str
     source: str

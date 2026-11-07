@@ -1,4 +1,4 @@
-"""Rolling trace window: the full last-N-minutes view that every rule judges (decision #2)."""
+"""Rolling trace window: the full last-N-minutes view that every rule judges."""
 
 from __future__ import annotations
 

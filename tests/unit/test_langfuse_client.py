@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -382,3 +383,111 @@ def test_only_route_prefixed_tags_name_the_route(tags: list[str], expected_route
     trace = _client(lambda r: httpx.Response(200, json=body)).get_trace("tr-1")
 
     assert trace.route == expected_route
+
+
+def _page_handler(
+    traces: list[dict[str, Any]], observations: list[dict[str, Any]]
+) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        rows = traces if request.url.path == "/api/public/traces" else observations
+        return httpx.Response(200, json={"data": rows, "meta": {"totalPages": 1}})
+
+    return handler
+
+
+def _trace_row(trace_id: str) -> dict[str, Any]:
+    return {"id": trace_id, "name": "n", "timestamp": "2026-11-06T10:00:00Z", "tags": []}
+
+
+def _observation_row(observation_id: str, trace_id: str) -> dict[str, Any]:
+    return {
+        "id": observation_id,
+        "traceId": trace_id,
+        "type": "SPAN",
+        "startTime": "2026-11-06T10:00:00Z",
+        "endTime": "2026-11-06T10:00:05Z",
+    }
+
+
+@pytest.mark.parametrize(
+    "bad_row",
+    [
+        _trace_row("tr-bad") | {"timestamp": "yesterday"},
+        _trace_row("tr-bad") | {"timestamp": None},
+        _trace_row("tr-bad") | {"tags": "route:x"},
+        _trace_row("tr-bad") | {"totalCost": "cheap"},
+    ],
+    ids=["bad_timestamp", "missing_timestamp", "non_list_tags", "non_numeric_cost"],
+)
+def test_bad_trace_row_is_skipped_and_logged(bad_row: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+    rows = [_trace_row("tr-a"), bad_row, _trace_row("tr-c")]
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.langfuse_client"):
+        traces = _client(_page_handler(rows, [])).recent_traces(SINCE)
+
+    assert [t.id for t in traces] == ["tr-a", "tr-c"]
+    assert [(r.levelno, "tr-bad" in r.getMessage()) for r in caplog.records] == [(logging.WARNING, True)]
+
+
+@pytest.mark.parametrize("bad_id", [None, 7], ids=["missing_id", "non_string_id"])
+def test_trace_row_without_id_is_skipped(bad_id: Any, caplog: pytest.LogCaptureFixture) -> None:
+    rows = [_trace_row("tr-a"), _trace_row("x") | {"id": bad_id}, _trace_row("tr-c")]
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.langfuse_client"):
+        traces = _client(_page_handler(rows, [])).recent_traces(SINCE)
+
+    assert [t.id for t in traces] == ["tr-a", "tr-c"]
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+
+def test_trace_with_bad_observation_is_skipped(caplog: pytest.LogCaptureFixture) -> None:
+    rows = [_trace_row("tr-a"), _trace_row("tr-b"), _trace_row("tr-c")]
+    observations = [
+        _observation_row("ob-a", "tr-a"),
+        _observation_row("ob-b", "tr-b") | {"calculatedTotalCost": "cheap"},
+        _observation_row("ob-c", "tr-c"),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.langfuse_client"):
+        traces = _client(_page_handler(rows, observations)).recent_traces(SINCE)
+
+    assert [[o.id for o in t.observations] for t in traces] == [["ob-a"], ["ob-c"]]
+    assert [(r.levelno, "tr-b" in r.getMessage()) for r in caplog.records] == [(logging.WARNING, True)]
+
+
+def test_observation_without_trace_id_is_skipped(caplog: pytest.LogCaptureFixture) -> None:
+    observations = [_observation_row("ob-a", "tr-a"), _observation_row("ob-x", "tr-a") | {"traceId": None}]
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.langfuse_client"):
+        traces = _client(_page_handler([_trace_row("tr-a")], observations)).recent_traces(SINCE)
+
+    assert [[o.id for o in t.observations] for t in traces] == [["ob-a"]]
+    assert [(r.levelno, "ob-x" in r.getMessage()) for r in caplog.records] == [(logging.WARNING, True)]
+
+
+def test_clean_window_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="tripwire.langfuse_client"):
+        _window()
+
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (["not", "an", "object"], "not a JSON object"),
+        ({"data": []}, "no 'meta'"),
+        ({"meta": {"totalPages": 1}}, "no list 'data'"),
+        ({"data": [1], "meta": {"totalPages": 1}}, "no list 'data'"),
+        ({"data": [], "meta": {"totalPages": "1"}}, "no integer 'totalPages'"),
+    ],
+    ids=["body_not_dict", "no_meta", "no_data", "non_dict_rows", "bad_total_pages"],
+)
+def test_bad_envelope_still_raises(body: Any, message: str) -> None:
+    with pytest.raises(LangfuseError, match=message):
+        _client(lambda r: httpx.Response(200, json=body)).recent_traces(SINCE)
+
+
+def test_unauthorized_window_still_raises() -> None:
+    with pytest.raises(LangfuseError, match="refused the API keys"):
+        _client(lambda r: httpx.Response(401, text="no")).recent_traces(SINCE)

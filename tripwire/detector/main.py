@@ -1,4 +1,4 @@
-"""Detector main loop and wiring (E04).
+"""Detector main loop and wiring.
 
 Every `poll_seconds`, one poll does, in order:
 1. `TraceWindow.refresh()`. If Langfuse fails, the last good window is reused.
@@ -14,8 +14,10 @@ Every `poll_seconds`, one poll does, in order:
 
 Inside a step, each open incident (observe) is guarded too. The incident manager guards each (rule, route)
 group (ingest). One bad incident or group is logged and the others still run. Each step is guarded, so one
-failing step is logged and the loop keeps going. Incident state lives only in the containment service. The only things kept between polls are the last trace window and the de-duplication sets
-that the verifier and the incident manager already hold.
+failing step is logged and the loop keeps going.
+
+Incident state lives only in the containment service. The only things kept between polls are the last
+trace window and the de-duplication sets that the verifier and the incident manager already hold.
 """
 
 from __future__ import annotations
@@ -108,8 +110,6 @@ class Detector:
         self._guarded("auto-pause", lambda: self._autopause(traces), events)
         self._guarded("verify", self._verify, events)
         return events
-
-    # ---- steps -----------------------------------------------------------
 
     def _evaluate(self, traces: list[Trace], events: list[str]) -> list[RuleHit]:
         now = self._clock.now()

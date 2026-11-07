@@ -3,16 +3,20 @@
 Endpoints: GET /api/public/traces (paged, `fromTimestamp`), GET /api/public/observations (paged,
 `fromStartTime`) and GET /api/public/traces/{id}. Auth is HTTP basic with the public and secret keys.
 
-The trace list is filtered by start time only. This client has no "updated since" filter, so E00
-refreshes running traces with `get_trace`.
+The trace list is filtered by start time only. This client has no "updated since" filter, so
+the caller refreshes running traces with `get_trace`.
 
 Synchronous on purpose: the `LangfuseReader` port is a plain `def`. Every request has a timeout.
 5xx responses are retried with exponential backoff and jitter. Every other failure raises
 `LangfuseError`, so callers handle one exception type.
+
+One exception: in `recent_traces`, a single malformed trace or observation row is logged and skipped, so one
+bad row cannot blind the detector. Problems with the page itself (body shape, HTTP, page cap) still raise.
 """
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 from collections import defaultdict
@@ -24,6 +28,8 @@ from urllib.parse import quote
 import httpx
 
 from tripwire.contracts.models import Observation, Trace
+
+log = logging.getLogger(__name__)
 
 PAGE_SIZE = 100
 DEFAULT_MAX_PAGES = 100
@@ -79,20 +85,32 @@ class LangfuseClient:
 
         observations_by_trace: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in observation_rows:
-            observations_by_trace[_str_field(row, "traceId")].append(row)
+            observation_trace_id = row.get("traceId")
+            if not isinstance(observation_trace_id, str):
+                log.warning("skipping Langfuse observation %r: no string 'traceId'", row.get("id"))
+                continue
+            observations_by_trace[observation_trace_id].append(row)
 
-        rows_by_id = {_str_field(row, "id"): row for row in trace_rows}
-        return [
-            self._build_trace(row, observations_by_trace.get(trace_id, []))
-            for trace_id, row in rows_by_id.items()
-        ]
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        for row in trace_rows:
+            trace_id = row.get("id")
+            if not isinstance(trace_id, str):
+                log.warning("skipping Langfuse trace row with no string 'id'")
+                continue
+            rows_by_id[trace_id] = row
+
+        traces: list[Trace] = []
+        for trace_id, row in rows_by_id.items():
+            try:
+                traces.append(self._build_trace(row, observations_by_trace.get(trace_id, [])))
+            except LangfuseError as exc:
+                log.warning("skipping malformed Langfuse trace %s: %s", trace_id, exc)
+        return traces
 
     def get_trace(self, trace_id: str) -> Trace:
         """Fresh copy of one trace with all its observations."""
         body = self._get_json(f"/api/public/traces/{quote(trace_id, safe='')}")
         return self._build_trace(_expect_dict(body), _dict_list(body, "observations"))
-
-    # ----- HTTP -----
 
     def _collect(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -138,8 +156,6 @@ class LangfuseClient:
     def _backoff(self, attempt: int) -> float:
         return self._base_backoff * float(2**attempt) + self._rand() * self._base_backoff
 
-    # ----- mapping -----
-
     def _build_trace(self, row: dict[str, Any], observation_rows: list[dict[str, Any]]) -> Trace:
         observations = [_observation(obs) for obs in observation_rows]
         ends = [_optional_datetime(obs, "endTime") for obs in observation_rows]
@@ -161,9 +177,6 @@ class LangfuseClient:
             total_cost_usd=total_cost,
             observations=observations,
         )
-
-
-# ----- helpers: route, observation, validation -----
 
 
 def _route(row: dict[str, Any]) -> str:

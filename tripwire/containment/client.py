@@ -1,4 +1,4 @@
-"""HTTP `ContainmentClient`: one method per route of the containment service (section 3 of tasks.md).
+"""HTTP `ContainmentClient`: one method per route of the containment service.
 
 Refusals (404/409/422 with a `reason`) raise `ContainmentRefused(reason)`. Any other error status
 or a network failure propagates as the httpx exception.
@@ -37,8 +37,6 @@ class ContainmentHTTPClient:
     def close(self) -> None:
         self._http.close()
 
-    # ---- incidents -------------------------------------------------------
-
     def open_incident(self, rule: str, route: str, opened_at: datetime) -> Incident:
         body = {"rule": rule, "route": route, "opened_at": opened_at.isoformat()}
         return self._incident(self._send("POST", "/incidents", json=body))
@@ -56,8 +54,6 @@ class ContainmentHTTPClient:
 
     def reopen(self, incident_id: str) -> Incident:
         return self._incident(self._send("POST", f"/incidents/{incident_id}/reopen", json={}))
-
-    # ---- actions ---------------------------------------------------------
 
     def apply(
         self,
@@ -81,8 +77,6 @@ class ContainmentHTTPClient:
 
     def flags(self) -> dict[str, Any]:
         return self._send("GET", "/flags")
-
-    # ---- helpers ---------------------------------------------------------
 
     def _send(self, method: str, path: str, **kwargs: Any) -> Any:
         response = self._http.request(method, path, **kwargs)

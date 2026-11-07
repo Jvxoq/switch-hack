@@ -1,4 +1,4 @@
-"""Fix-PR tool against a local bare git repo and a stubbed GitHub API (tasks.md A02, T15).
+"""Fix-PR tool against a local bare git repo and a stubbed GitHub API.
 
 The git side is real: a bare origin, a clone standing in for the agent's workdir, and real pushes.
 The GitHub side is an httpx.MockTransport, so no test reaches the network.
@@ -210,7 +210,7 @@ def test_T15_every_git_call_has_timeout(
     _tool(containment, workdir, FakeGitHub()).open_fix_pr(incident_id, "Stop repeated list calls", PATCH)
 
     verbs = [verb for verb, _ in seen]
-    assert verbs == ["fetch", "worktree", "apply", "commit", "push", "worktree"]
+    assert verbs == ["fetch", "worktree", "apply", "commit", "ls-remote", "push", "worktree"]
     assert all(timeout == GIT_TIMEOUT_SECONDS for _, timeout in seen)
 
 
@@ -327,3 +327,25 @@ def test_T15_oversize_patch_refused(
     assert result == f"refused: patch is over {MAX_PATCH_CHARS} characters"
     assert _git(origin, "branch", "--list", "tripwire/*") == ""
     assert github.requests == []
+
+
+def test_T15_retry_after_failed_pr_succeeds(
+    containment: FakeContainment, clock: FakeClock, repos: tuple[Path, Path]
+) -> None:
+    """A failed PR call leaves the branch on origin. The retry pushes a fresh commit over it and opens the PR."""
+    origin, workdir = repos
+    incident_id = _open_incident(containment, clock)
+    first = _tool(containment, workdir, FakeGitHub(status=422)).open_fix_pr(
+        incident_id, "Stop repeated list calls", PATCH
+    )
+    first_sha = _git(origin, "rev-parse", "tripwire/INC-1").strip()
+
+    second = _tool(containment, workdir, FakeGitHub()).open_fix_pr(incident_id, "Stop the repeated list calls", PATCH)
+
+    assert first == "refused: GitHub refused the pull request: HTTP 422"
+    assert second == f"PR opened: {PR_URL}"
+    assert _git(origin, "rev-parse", "tripwire/INC-1").strip() != first_sha
+    assert _git(origin, "log", "-1", "--format=%s", "tripwire/INC-1").strip() == "INC-1: Stop the repeated list calls"
+    assert _git(origin, "show", "tripwire/INC-1:app.txt") == "one\nTWO\n"
+    assert containment.get(incident_id).pr_url == PR_URL
+

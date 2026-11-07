@@ -19,7 +19,7 @@ from tests.fakes.clock import FakeClock
 from tests.fakes.containment import FakeContainment
 from tripwire.containment.app import ContainmentStore
 from tripwire.contracts.config import TripwireConfig, load_config_dict
-from tripwire.contracts.ports import ContainmentRefused
+from tripwire.contracts.ports import SWITCH_APPROVAL, ContainmentRefused
 
 ROUTE = "order-lookup"
 OTHER_ROUTE = "checkout"  # not in the default config, so the flags must come from the incident
@@ -163,7 +163,7 @@ SCENARIOS: dict[str, list[Step]] = {
         _apply("INC-1", "disable_route"),
         _move("INC-1", "verifying"),
         *_awaiting("INC-2", "silent_error"),
-        _apply("INC-2", "cap_max_steps", approver="switch-approval"),
+        _apply("INC-2", "cap_max_steps", approver=SWITCH_APPROVAL),
         _move("INC-2", "verifying"),
         _move("INC-2", "resolved"),
     ],
@@ -195,7 +195,7 @@ SCENARIOS: dict[str, list[Step]] = {
         _apply("INC-1", "cap_max_steps"),
         _apply("INC-1", "fallback_model"),
         _apply("INC-1", "cap_max_steps", source="auto_pause", approver=None, spend=100.0),
-        _revert("INC-1", by="switch-approval"),
+        _revert("INC-1", by=SWITCH_APPROVAL),
         _revert("INC-1"),
     ],
 }

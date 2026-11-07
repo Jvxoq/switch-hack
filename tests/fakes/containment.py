@@ -1,4 +1,4 @@
-"""In-memory ContainmentClient with the same action rules and state transitions as section 3 of tasks.md.
+"""In-memory ContainmentClient with the same action rules and state transitions as the real service.
 
 Route flags are derived the same way the real service derives them (C-FIX6): defaults plus every ACTIVE incident
 action on that route. Any disable disables the route; the strictest step cap wins. There are no per-route snapshots,
@@ -22,7 +22,7 @@ from tripwire.contracts.models import (
     ActionSource,
     Incident,
 )
-from tripwire.contracts.ports import ContainmentRefused
+from tripwire.contracts.ports import SWITCH_APPROVAL, ContainmentRefused
 
 RULES = ("loop", "silent_error", "cost_spike", "hourly_ceiling")
 STATES = frozenset(TRANSITIONS) | {"resolved", "handed_off", "contained", "auto_paused"}
@@ -31,8 +31,35 @@ PATCHABLE = frozenset(
     {"state", "hit_count", "trace_ids", "cost_usd", "thread_ref", "root_cause", "pr_url", "rejections",
      "quiet_since", "resolved_at"}
 )
-SWITCH_APPROVAL = "switch-approval"
+# Allowed value type per PATCH field. None is allowed everywhere except state and the counters.
+_PATCH_TYPES: dict[str, type | tuple[type, ...]] = {
+    "state": str,
+    "hit_count": int,
+    "trace_ids": list,
+    "cost_usd": (int, float),
+    "thread_ref": str,
+    "root_cause": str,
+    "pr_url": str,
+    "rejections": int,
+    "quiet_since": datetime,
+    "resolved_at": datetime,
+}
+_NOT_NULLABLE = frozenset({"state", "hit_count", "trace_ids", "cost_usd", "rejections"})
 REOPENABLE = frozenset({"contained", "verifying", "auto_paused"})
+
+
+def _check_patch_value(name: str, value: Any) -> None:
+    if value is None:
+        if name in _NOT_NULLABLE:
+            raise ContainmentRefused(f"{name}: must not be null")
+        return
+    expected = _PATCH_TYPES[name]
+    bad_bool = isinstance(value, bool)
+    bad_naive = isinstance(value, datetime) and value.tzinfo is None
+    bad_items = name == "trace_ids" and isinstance(value, list) and not all(isinstance(v, str) for v in value)
+    bad_state = name == "state" and value not in STATES
+    if not isinstance(value, expected) or bad_bool or bad_naive or bad_items or bad_state:
+        raise ContainmentRefused(f"{name}: invalid value {value!r}")
 
 
 def _default_flags() -> dict[str, Any]:
@@ -86,6 +113,8 @@ class FakeContainment:
         for name in fields:
             if name not in PATCHABLE:
                 raise ContainmentRefused(f"field {name!r} cannot be changed with PATCH")
+        for name, value in fields.items():
+            _check_patch_value(name, value)
         new_state = fields.get("state")
         if new_state is not None and new_state != inc.state:
             self._check_transition(inc, new_state)
