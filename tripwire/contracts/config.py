@@ -82,6 +82,8 @@ class TripwireConfig(_Strict):
     containment_url: str = "http://127.0.0.1:8700"
     # Overridden by the LANGFUSE_HOST env var when that is set (the detector reads it, see detector/main.py).
     langfuse_host: str = Field("http://localhost:3000", min_length=1)
+    # Pages read per Langfuse list endpoint (100 rows a page) on each poll. A busier window needs a higher cap.
+    langfuse_max_pages: int = Field(100, ge=1)
     # Incident record log (JSONL). The detector's --records flag overrides it.
     records_path: str = Field("incident-records.md", min_length=1)
     verify_minutes: float = Field(5, gt=0)

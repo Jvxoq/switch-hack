@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from tripwire.contracts.ports import LangfuseReader
-from tripwire.langfuse_client import MAX_PAGES, LangfuseClient, LangfuseError
+from tripwire.langfuse_client import DEFAULT_MAX_PAGES, LangfuseClient, LangfuseError
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 BASE = "https://langfuse.test"
@@ -318,17 +318,53 @@ def test_error_body_is_truncated() -> None:
     assert str(excinfo.value) == "Langfuse returned HTTP 400: " + "x" * 200
 
 
-def test_endless_pagination_is_capped() -> None:
-    requested: list[str] = []
-
+def _endless_pages(requested: list[str]) -> Callable[[httpx.Request], httpx.Response]:
     def handler(request: httpx.Request) -> httpx.Response:
         requested.append(request.url.params["page"])
         return httpx.Response(200, json={"data": [], "meta": {"totalPages": 1000}})
 
-    with pytest.raises(LangfuseError, match=f"more than {MAX_PAGES} pages"):
-        _client(handler).recent_traces(SINCE)
+    return handler
 
-    assert len(requested) == MAX_PAGES
+
+def test_default_page_cap_is_one_hundred() -> None:
+    requested: list[str] = []
+
+    with pytest.raises(LangfuseError, match=f"more than {DEFAULT_MAX_PAGES} pages"):
+        _client(_endless_pages(requested)).recent_traces(SINCE)
+
+    assert DEFAULT_MAX_PAGES == 100
+    assert len(requested) == DEFAULT_MAX_PAGES
+
+
+def test_page_cap_hit_fails_and_names_the_knob() -> None:
+    requested: list[str] = []
+
+    with pytest.raises(LangfuseError, match="more than 3 pages; raise langfuse_max_pages") as excinfo:
+        _client(_endless_pages(requested), max_pages=3).recent_traces(SINCE)
+
+    assert str(excinfo.value).startswith("/api/public/traces has more than 3 pages")
+    assert requested == ["1", "2", "3"]
+
+
+def test_exactly_at_page_cap_reads_every_page() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.params["page"])
+        if request.url.path == "/api/public/traces":
+            return httpx.Response(200, json={"data": [], "meta": {"totalPages": 3}})
+        return httpx.Response(200, json={"data": [], "meta": {"totalPages": 1}})
+
+    traces = _client(handler, max_pages=3).recent_traces(SINCE)
+
+    assert traces == []
+    assert requested == ["1", "2", "3", "1"]
+
+
+def test_pages_under_cap_return_every_row() -> None:
+    traces = _client(_window_handler([]), max_pages=2).recent_traces(SINCE)
+
+    assert [t.id for t in traces] == ["tr-1", "tr-2", "tr-3"]
 
 
 @pytest.mark.parametrize(

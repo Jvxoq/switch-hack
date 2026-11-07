@@ -26,7 +26,7 @@ import httpx
 from tripwire.contracts.models import Observation, Trace
 
 PAGE_SIZE = 100
-MAX_PAGES = 50
+DEFAULT_MAX_PAGES = 100
 MAX_ERROR_CHARS = 200
 UNKNOWN_ROUTE = "unknown"
 ROUTE_TAG_PREFIX = "route:"
@@ -50,6 +50,7 @@ class LangfuseClient:
         secret_key: str,
         *,
         timeout_seconds: float = 10.0,
+        max_pages: int = DEFAULT_MAX_PAGES,
         max_retries: int = 3,
         base_backoff_seconds: float = 0.5,
         transport: httpx.BaseTransport | None = None,
@@ -62,6 +63,7 @@ class LangfuseClient:
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
         )
+        self._max_pages = max_pages
         self._max_retries = max_retries
         self._base_backoff = base_backoff_seconds
         self._sleep = sleep
@@ -101,8 +103,11 @@ class LangfuseClient:
             total_pages = _total_pages(body)
             if page >= total_pages:
                 return rows
-            if page >= MAX_PAGES:
-                raise LangfuseError(f"{path} has more than {MAX_PAGES} pages; narrow the window")
+            if page >= self._max_pages:
+                # Partial rows would break the window contract (full window, observations loaded), so fail loudly.
+                raise LangfuseError(
+                    f"{path} has more than {self._max_pages} pages; raise langfuse_max_pages or narrow the window"
+                )
             page += 1
 
     def _get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:

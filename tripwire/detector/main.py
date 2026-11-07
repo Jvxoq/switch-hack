@@ -12,7 +12,8 @@ Every `poll_seconds`, one poll does, in order:
    dedupe source across restarts, so a hand-off that happened while the detector was down is recorded on the
    next start, and a restart never writes a record twice.
 
-Each step is guarded, so one failing step is logged and the loop keeps going. Incident state lives only in the
+Inside a step, each open incident (observe) and each (rule, route) group (ingest) is guarded too, so one bad
+incident is logged and the others still run. Each step is guarded, so one failing step is logged and the loop keeps going. Incident state lives only in the
 containment service. The only things kept between polls are the last trace window and the de-duplication sets
 that the verifier and the incident manager already hold.
 """
@@ -23,8 +24,11 @@ import argparse
 import logging
 import os
 import time
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
+
+import httpx
 
 from tripwire import records
 from tripwire.containment.client import ContainmentHTTPClient
@@ -111,7 +115,7 @@ class Detector:
 
         hits = self._evaluate(traces, events)
         self._guarded("observe", lambda: self._observe(hits), events)
-        self._guarded("ingest", lambda: self._incidents.ingest(hits), events)
+        self._guarded("ingest", lambda: self._ingest(hits), events)
         self._guarded("auto-pause", lambda: self._autopause(traces), events)
         self._guarded("verify", self._verify, events)
         return events
@@ -140,9 +144,28 @@ class Detector:
             ]
             if not new:
                 continue
-            line = self._verifier.observe_hits(inc, new)
+            try:
+                line = self._verifier.observe_hits(inc, new)
+            except Exception:
+                log.exception("observe failed for %s", inc.id)
+                events.append(f"observe failed for {inc.id}")
+                continue
             if line:
                 events.append(line)
+        return events
+
+    def _ingest(self, hits: list[RuleHit]) -> list[str]:
+        # One (rule, route) group at a time, so one failing incident does not stop the rest.
+        groups: defaultdict[tuple[str, str], list[RuleHit]] = defaultdict(list)
+        for hit in hits:
+            groups[(hit.rule, hit.route)].append(hit)
+        events: list[str] = []
+        for (rule, route), group in groups.items():
+            try:
+                self._incidents.ingest(group)
+            except Exception:
+                log.exception("ingest failed for %s on %s", rule, route)
+                events.append(f"ingest failed for {rule} on {route}")
         return events
 
     def _autopause(self, traces: list[Trace]) -> list[str]:
@@ -217,6 +240,24 @@ def make_write_record(records_path: str) -> Callable[[Incident], str]:
     return write_record
 
 
+def make_reader(
+    cfg: TripwireConfig,
+    host: str,
+    public_key: str,
+    secret_key: str,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> LangfuseClient:
+    """The Langfuse client with the configured page cap. `transport` is for tests only."""
+    return LangfuseClient(
+        host,
+        public_key,
+        secret_key,
+        max_pages=cfg.langfuse_max_pages,
+        transport=transport,
+    )
+
+
 def resolve_langfuse_host(cfg: TripwireConfig, environ: Mapping[str, str]) -> str:
     """The LANGFUSE_HOST env var wins; otherwise the config's `langfuse_host`."""
     return environ.get(LANGFUSE_HOST_ENV) or cfg.langfuse_host
@@ -255,7 +296,7 @@ def main(
         log.error("%s", err)
         return 2
 
-    reader = LangfuseClient(host, public_key, secret_key)
+    reader = make_reader(cfg, host, public_key, secret_key)
     containment = ContainmentHTTPClient(cfg.containment_url)
     detector = Detector(
         cfg=cfg,

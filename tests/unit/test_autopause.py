@@ -313,3 +313,30 @@ def test_T9_ceiling_applies_below_half_budget(spy, switch, clock, cfg) -> None:
     assert spy.auto_pause_calls() == [
         {"incident_id": "INC-1", "action": "disable_route", "source": "auto_pause", "spend_usd": 10.0}
     ]
+
+
+def test_auto_pause_keeps_going_after_one_apply_fails(containment, switch, clock, cfg, monkeypatch):
+    """An unreachable containment call for one incident must not skip the other incidents in the same poll."""
+    first = containment.open_incident("loop", ROUTE, clock.now())
+    second = containment.open_incident("silent_error", ROUTE, clock.now())
+    clock.advance(minutes=11)
+    real_apply = containment.apply
+
+    def first_apply_fails(incident_id, action, source, approver, spend_usd):
+        if incident_id == first.id:
+            raise ConnectionError("containment unreachable")
+        return real_apply(incident_id, action, source, approver, spend_usd)
+
+    monkeypatch.setattr(containment, "apply", first_apply_fails)
+    paused = run_autopause(
+        containment=containment,
+        switch=switch,
+        clock=clock,
+        cfg=cfg,
+        traces=[],
+        ingest=lambda hit: None,
+    )
+
+    assert [p.incident_id for p in paused] == [second.id]
+    assert containment.get(second.id).action == "disable_route"
+    assert containment.get(first.id).action is None

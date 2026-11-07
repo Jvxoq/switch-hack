@@ -1,6 +1,9 @@
 """In-memory ContainmentClient with the same action rules and state transitions as section 3 of tasks.md.
 
-S01 runs the same test cases against this fake and the real service.
+Route flags are derived the same way the real service derives them (C-FIX6): defaults plus every ACTIVE incident
+action on that route. Any disable disables the route; the strictest step cap wins. There are no per-route snapshots,
+so reverting one incident never drops another incident's action. `tests/unit/test_containment_fake_parity.py` runs
+the same operations against this fake and the real `ContainmentStore` and asserts identical results.
 """
 
 from __future__ import annotations
@@ -50,9 +53,6 @@ class FakeContainment:
         self._fallback_model = fallback_model
         self._incidents: dict[str, Incident] = {}
         self._counter = 0
-        self._flags: dict[str, dict[str, Any]] = {}
-        # incident id -> flags of its route before its active action (restored on replace or revert)
-        self._snapshots: dict[str, dict[str, Any]] = {}
         # incident id -> ask round in which an owner action was accepted
         self._owner_round: dict[str, int] = {}
         self.log: list[dict[str, Any]] = []
@@ -120,11 +120,8 @@ class FakeContainment:
         else:
             raise ContainmentRefused(f"unknown action source {source!r}")
 
-        # Replace, don't stack: restore what the active action changed, then apply the new one.
-        if inc.action is not None:
-            self._restore(inc)
-        self._snapshots[inc.id] = deepcopy(self._route_flags(inc.route))
-        self._apply_effect(inc.route, action)
+        # Replace, don't stack: the incident's one action slot takes the new action. Flags are derived from
+        # every active action, so the old one stops counting and the other incidents' actions are untouched.
         inc.action = action
         inc.action_source = source
         if source == "owner":
@@ -144,7 +141,6 @@ class FakeContainment:
         if inc.action is None:
             raise ContainmentRefused(f"{incident_id} has no active action to revert")
         self._check_approver(by, "revert")
-        self._restore(inc)
         inc.action = None
         inc.action_source = None
         inc.state = "verifying"
@@ -153,7 +149,9 @@ class FakeContainment:
 
     def flags(self) -> dict[str, Any]:
         routes = {name: _default_flags() for name in self._cfg.routes}
-        routes.update(deepcopy(self._flags))
+        for inc in self._incidents.values():
+            if inc.action is not None:
+                self._apply_effect(routes.setdefault(inc.route, _default_flags()), inc.action)
         return {"routes": routes}
 
     # ---- helpers ---------------------------------------------------------
@@ -205,19 +203,12 @@ class FakeContainment:
         if not (spend_usd >= auto.budget_fraction * budget or elapsed_min >= auto.minutes):
             raise ContainmentRefused("auto-pause thresholds not reached")
 
-    def _route_flags(self, route: str) -> dict[str, Any]:
-        return self._flags.setdefault(route, _default_flags())
-
-    def _restore(self, inc: Incident) -> None:
-        snapshot = self._snapshots.pop(inc.id)
-        self._flags[inc.route] = snapshot
-
-    def _apply_effect(self, route: str, action: str) -> None:
-        flags = self._route_flags(route)
+    def _apply_effect(self, flags: dict[str, Any], action: str) -> None:
         if action == "disable_route":
             flags["disabled"] = True
         elif action == "cap_max_steps":
-            flags["max_steps"] = self._max_steps_cap
+            current = flags["max_steps"]
+            flags["max_steps"] = self._max_steps_cap if current is None else min(current, self._max_steps_cap)
         elif action == "fallback_model":
             flags["model"] = self._fallback_model
 

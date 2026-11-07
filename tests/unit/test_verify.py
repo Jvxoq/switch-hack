@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from datetime import timedelta
 
 import pytest
@@ -33,9 +34,9 @@ def verifier(containment: FakeContainment, switch: FakeSwitch, clock: FakeClock,
     return Verifier(containment=containment, switch=switch, clock=clock, cfg=cfg, write_record=write_record)
 
 
-def _open_and_contain(containment: FakeContainment, clock: FakeClock, action: str):
+def _open_and_contain(containment: FakeContainment, clock: FakeClock, action: str, rule: str = "loop"):
     """Open an incident, ask the owner, and apply `action` (owner or auto-pause as the action requires)."""
-    inc = containment.open_incident("loop", "order-lookup", clock.now())
+    inc = containment.open_incident(rule, "order-lookup", clock.now())
     containment.update(inc.id, state="investigating")
     containment.update(inc.id, state="awaiting_approval")
     containment.apply(inc.id, action, "owner", "jason", spend_usd=1.0)
@@ -188,3 +189,50 @@ def test_T17_refusal_is_reported_and_does_not_stop_other_incidents(verifier, con
 
     assert events == ["INC-999: refused: unknown incident INC-999", f"{real.id}: verifying"]
     assert containment.get(real.id).state == "verifying"
+
+
+def test_tick_keeps_advancing_after_one_incident_fails(
+    verifier, containment, clock, switch, monkeypatch, caplog
+):
+    """One incident whose status post fails must not stop the others from advancing in the same poll."""
+    stuck = _open_and_contain(containment, clock, "disable_route")
+    _set_thread(containment, switch, stuck.id)
+    healthy = _open_and_contain(containment, clock, "cap_max_steps", rule="silent_error")
+
+    def switch_is_down(thread_ref: str, text: str) -> None:
+        raise RuntimeError("Switch is down")
+
+    monkeypatch.setattr(switch, "set_status", switch_is_down)
+    with caplog.at_level(logging.ERROR, logger="tripwire.detector.verify"):
+        events = verifier.tick([containment.get(stuck.id), containment.get(healthy.id)])
+
+    assert events == [f"{stuck.id}: verify failed", f"{healthy.id}: verifying"]
+    assert containment.get(healthy.id).state == "verifying"
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        ("ERROR", f"verify step failed for {stuck.id}")
+    ]
+
+
+def test_handed_off_record_retried_after_write_failure(containment, clock, switch, cfg):
+    """A record whose write failed must be written again on the next poll, not dropped for the process."""
+    attempts: list[str] = []
+
+    def flaky_write(inc):
+        attempts.append(inc.id)
+        if len(attempts) == 1:
+            raise OSError("disk full")
+        return f"RECORD {inc.id}"
+
+    verifier = Verifier(
+        containment=containment, switch=switch, clock=clock, cfg=cfg, write_record=flaky_write
+    )
+    inc = containment.open_incident("loop", "order-lookup", clock.now())
+    _set_thread(containment, switch, inc.id)
+    containment.update(inc.id, state="investigating")
+    containment.update(inc.id, state="handed_off")
+    handed = containment.get(inc.id)
+
+    with pytest.raises(OSError, match="disk full"):
+        verifier.on_handed_off(handed)
+    assert verifier.on_handed_off(handed) == f"{inc.id}: recorded (handed_off)"
+    assert attempts == [inc.id, inc.id]
