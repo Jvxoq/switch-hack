@@ -1,0 +1,50 @@
+# Example Tripwire config. Secrets are env-var names only; values come from the environment.
+poll_seconds: 15
+window_minutes: 60            # rolling trace window
+containment_url: http://127.0.0.1:8700
+langfuse_host: http://localhost:3000   # the LANGFUSE_HOST env var overrides this
+records_path: incident-records.md      # JSONL incident record log; the detector's --records flag overrides this
+
+rules:
+  loop:
+    max_repeats: 5
+    max_observations: 25
+  silent_error:
+    count: 3
+    window_minutes: 5
+    patterns: ["error", "not found"]
+  cost_spike:
+    median_multiplier: 5
+    per_trace_usd: 1.0
+
+allow_list_tools: [list_orders_page]
+
+routes:
+  order-lookup:
+    loss_budget_usd: 50
+    hourly_ceiling_usd: 50
+
+auto_pause:
+  minutes: 10
+  budget_fraction: 0.5
+
+verify_minutes: 5
+
+tripwire_guard:
+  max_tool_calls: 20
+  max_minutes: 3
+
+fix_pr:
+  repo_path: ""           # local clone of the app repo the fix PRs branch from; empty turns the fix-PR tool off
+  github_owner: ""        # GitHub owner of that repo, for example the org or user name
+  github_repo: ""         # GitHub repo name, without the owner
+  base_branch: main       # branch the fix PRs are based on and target
+
+owners: [jason]
+room: agent-incidents
+
+secrets:
+  langfuse_public_key: LANGFUSE_PUBLIC_KEY
+  langfuse_secret_key: LANGFUSE_SECRET_KEY
+  switch_token: SWITCH_TOKEN
+  github_token: GITHUB_TOKEN

@@ -1,0 +1,7 @@
+{
+  "data": [
+    {"id": "tr-3", "name": "order-lookup", "timestamp": "2026-11-06T10:10:00.000Z",
+     "tags": ["route:order-lookup", "env:prod"], "sessionId": "thread-c", "totalCost": null}
+  ],
+  "meta": {"page": 2, "limit": 100, "totalItems": 3, "totalPages": 2}
+}

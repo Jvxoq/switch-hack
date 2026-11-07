@@ -1,0 +1,9 @@
+{
+  "data": [
+    {"id": "tr-1", "name": "order-lookup", "timestamp": "2026-11-06T10:00:00.000Z",
+     "tags": ["route:order-lookup"], "sessionId": "thread-a", "totalCost": 0.12},
+    {"id": "tr-2", "name": "order-lookup", "timestamp": "2026-11-06T10:05:00.000Z",
+     "tags": [], "sessionId": null, "totalCost": null}
+  ],
+  "meta": {"page": 1, "limit": 100, "totalItems": 3, "totalPages": 2}
+}

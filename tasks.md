@@ -186,29 +186,29 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 
 | ID | Task | Deps | Size | Tests | Status | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| C01 | Scaffold, contracts, fakes | – | M | – | todo | |
-| C02 | Switch API research → `docs/switch-api.md` | – | S | – | todo | |
-| H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | todo | H |
-| R01 | Loop rule | C01 | S | T1, T2 | todo | |
-| R02 | Silent-error rule | C01 | S | T3 | todo | |
-| R03 | Cost-spike rule | C01 | S | T4 | todo | |
-| S01 | Containment service + incident store | C01 | M | T10, T12 | todo | |
-| L01 | Langfuse HTTP client | C01 | M | – | todo | |
-| W01 | Switch HTTP client | C01, H00 | M | T7 (client half) | todo | |
-| D01 | Demo agent with switchable bugs | C01 | M | – | todo | |
-| P01 | Incident record writer | C01 | S | T18 | todo | |
-| E00 | Detector: rolling trace window | C01 | S | – | todo | |
-| E01 | Detector: incidents + alerts | R01, R02, R03 | M | T5, T6, T7 | todo | |
-| E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | todo | |
-| E03 | Detector: verify, resolve, reopen | C01 | S | T17 | todo | |
-| E04 | Detector main loop + wiring | E00, E01, E02, E03, L01, W01, P01, S01 | M | – | todo | |
-| I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | todo | |
-| A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | todo | |
-| A02 | Fix-PR tool | A01 | S | T15 | todo | |
-| A03 | Agent evals + eval runner | A01 | M | T13, T16, T19 | todo | |
-| K01 | Docker Compose + self-hosted Langfuse | E04, S01, D01 | M | – | todo | |
-| H01 | Switch room setup: template, allowed senders (human) | A01, H00 | S | – | todo | H |
-| H02 | Live Switch tests + E2E script | K01, H01, A02 | M | T14, T20 | todo | H |
+| C01 | Scaffold, contracts, fakes | – | M | – | done | Scaffold, contracts, config loader, ports and in-memory fakes pushed; suite green. |
+| C02 | Switch API research → `docs/switch-api.md` | – | S | – | done | Switch API facts doc (unknowns marked UNCONFIRMED) + scripts/switch_spike.py; no live calls. |
+| H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | blocked | H — skipped by human for now (no public Switch gateway); W01/A01 built provisionally. |
+| R01 | Loop rule | C01 | S | T1, T2 | done | Loop rule (T1,T2); allow-list via constructor since RulesConfig lacks it — E04 must wire. |
+| R02 | Silent-error rule | C01 | S | T3 | done | Silent-error rule: 3 non-ERROR matches in 5 min per route (report lost in restart; T3 green). |
+| R03 | Cost-spike rule | C01 | S | T4 | done | Cost-spike rule vs per-route hourly median baseline (report lost in restart; T4 green). |
+| S01 | Containment service + incident store | C01 | M | T10, T12 | done | Containment service + incident store + HTTP client per section 3 (T10,T12) against fake and HTTP. |
+| L01 | Langfuse HTTP client | C01 | M | – | done | Langfuse reader: paging, 10s timeouts, bounded 5xx retries, LangfuseError; sync per port. Note for E04: start-time filter only, refresh running traces via get_trace. |
+| W01 | Switch HTTP client | C01, H00 | M | T7 (client half) | done | PROVISIONAL (H00 not run): Switch client, agent+Slack paths, reply/edit status modes, dry run (T7 client half). |
+| D01 | Demo agent with switchable bugs | C01 | M | – | done | Demo agent: loop/silent_error/cost_spike bugs, offline mode, HTTP Langfuse sink; 21 tests. Live Langfuse/real-model unverified. |
+| P01 | Incident record writer | C01 | S | T18 | done | Incident record renderer + JSONL appender; missing optionals render as —. |
+| E00 | Detector: rolling trace window | C01 | S | – | done | TraceWindow: 30 s poll overlap, running-trace refetch, 60-min drop, finished traces not refetched. |
+| E01 | Detector: incidents + alerts | R01, R02, R03 | M | T5, T6, T7 | done | IncidentManager: dedupe per rule+route, alerts, queues behind busy incidents (T5,T6,T7). |
+| E02 | Detector: auto-pause + hourly ceiling | C01, S01 | M | T8, T9 | done | Auto-pause + hourly ceiling (T8,T9). Note: containment refuses ceiling pauses <0.5x loss budget before 10 min. |
+| E03 | Detector: verify, resolve, reopen | C01 | S | T17 | done | Verifier: verifying/resolve/reopen, disabled-route status, handoff record (T17); E04 must call on_handed_off. |
+| E04 | Detector main loop + wiring | E00, E01, E02, E03, L01, W01, P01, S01 | M | – | done | Detector poll loop, rule wiring, verifier hand-off, auto-pause; 13 integration tests. Gaps fixed in C-FIX4: Langfuse host/records in config, hand-off recorded after downtime. |
+| I01 | Containment ↔ demo agent integration | S01, D01 | S | T11 | done | T11: real containment service over HTTP drives demo agent disable_route stop. |
+| A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | done | Tool server w/ server-side call+time budget (T16), room template, instructions; MCP stdio via python -m tripwire_agent.server (A01b); T16 lock-sensitive. PROVISIONAL (H00). |
+| A02 | Fix-PR tool | A01 | S | T15 | done | Fix-PR tool: branch, commit, open PR, store pr_url; never approves/merges (T15). Registered in tool server via C-FIX3. |
+| A03 | Agent evals + eval runner | A01 | M | T13, T16, T19 | done | Eval harness, recorded incidents, offline tests (T13,T16,T19 offline parts); 5 paid evals skip without key — X01 runs them. |
+| K01 | Docker Compose + self-hosted Langfuse | E04, S01, D01 | M | – | done | Compose stack, Dockerfile, Langfuse bootstrap, .env.example. Live check: v4 drops /api/public/traces → K01c pins Langfuse v3. |
+| H01 | Switch room setup: template, allowed senders (human) | A01, H00 | S | – | blocked | H — waits on H00 (skipped by human for now). |
+| H02 | Live Switch tests + E2E script | K01, H01, A02 | M | T14, T20 | blocked | H — waits on H01/H00 (skipped by human for now). |
 | X01 | Verification, paid eval run, README | H02, A03, I01 | M | all | todo | key gate |
 
 **Waves:** `C01, C02` → `H00, R*, S01, L01, D01, P01, E00, E03` → `W01, E01, E02, I01, A01` → `E04, A02, A03, H01` → `K01` → `H02` → `X01`.

@@ -1,0 +1,24 @@
+{
+  "data": [
+    {"id": "ob-1a", "traceId": "tr-1", "type": "SPAN", "name": "fetch_order",
+     "startTime": "2026-11-06T10:00:00.000Z", "endTime": "2026-11-06T10:00:10.000Z",
+     "level": "DEFAULT", "input": {"order_id": "42"}, "output": {"status": "ok"},
+     "calculatedTotalCost": 0.05},
+    {"id": "ob-1b", "traceId": "tr-1", "type": "GENERATION", "name": "decide",
+     "startTime": "2026-11-06T10:00:10.000Z", "endTime": "2026-11-06T10:00:30.000Z",
+     "level": "DEFAULT", "input": null, "output": null, "calculatedTotalCost": 0.06},
+    {"id": "ob-2a", "traceId": "tr-2", "type": "SPAN", "name": "fetch_order",
+     "startTime": "2026-11-06T10:05:00.000Z", "endTime": null,
+     "level": "ERROR", "input": null, "output": null, "calculatedTotalCost": null},
+    {"id": "ob-3a", "traceId": "tr-3", "type": "GENERATION", "name": "decide",
+     "startTime": "2026-11-06T10:10:00.000Z", "endTime": "2026-11-06T10:10:20.000Z",
+     "level": "DEFAULT", "input": null, "output": null, "calculatedTotalCost": 0.4},
+    {"id": "ob-3b", "traceId": "tr-3", "type": "SPAN", "name": "send_reply",
+     "startTime": "2026-11-06T10:10:20.000Z", "endTime": "2026-11-06T10:11:00.000Z",
+     "level": "DEFAULT", "input": null, "output": null, "calculatedTotalCost": null},
+    {"id": "ob-old", "traceId": "tr-old", "type": "SPAN", "name": "stale",
+     "startTime": "2026-11-06T10:01:00.000Z", "endTime": "2026-11-06T10:01:05.000Z",
+     "level": "DEFAULT", "input": null, "output": null, "calculatedTotalCost": 9.0}
+  ],
+  "meta": {"page": 1, "limit": 100, "totalItems": 6, "totalPages": 1}
+}

@@ -1,0 +1,32 @@
+[project]
+name = "tripwire"
+version = "0.1.0"
+description = "Tripwire: watches a Switch-hosted agent and contains runaway loops, silent errors and cost spikes."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+    "mcp>=2.3.0",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-timeout>=2.4.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+timeout = 10
+markers = [
+    "eval: paid agent evals (deselect with -m 'not eval')",
+    "switch: tests that need a live Switch room (deselect with -m 'not switch')",
+    "live: tests that may use the real network (exempt from the network block)",
+]

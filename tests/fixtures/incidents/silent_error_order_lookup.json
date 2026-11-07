@@ -1,0 +1,82 @@
+{
+  "description": "Three lookups return 'order not found' at DEFAULT level within five minutes.",
+  "rule": "silent_error",
+  "route": "order-lookup",
+  "incident_id": "INC-1",
+  "opened_at": "2026-11-06T12:05:00+00:00",
+  "trigger_trace_id": "tr-se-3",
+  "traces": [
+    {
+      "id": "tr-se-1",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T12:00:10+00:00",
+      "end_time": "2026-11-06T12:00:30+00:00",
+      "total_cost_usd": 0.01,
+      "observations": [
+        {
+          "id": "se-o1",
+          "trace_id": "tr-se-1",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "D-1"
+          },
+          "output": "order not found",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:00:10+00:00",
+          "cost_usd": 0.01
+        }
+      ]
+    },
+    {
+      "id": "tr-se-2",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T12:01:10+00:00",
+      "end_time": "2026-11-06T12:01:30+00:00",
+      "total_cost_usd": 0.01,
+      "observations": [
+        {
+          "id": "se-o2",
+          "trace_id": "tr-se-2",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "D-2"
+          },
+          "output": "order not found",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:01:10+00:00",
+          "cost_usd": 0.01
+        }
+      ]
+    },
+    {
+      "id": "tr-se-3",
+      "name": "order-lookup-run",
+      "route": "order-lookup",
+      "thread_id": null,
+      "start_time": "2026-11-06T12:02:10+00:00",
+      "end_time": "2026-11-06T12:02:30+00:00",
+      "total_cost_usd": 0.01,
+      "observations": [
+        {
+          "id": "se-o3",
+          "trace_id": "tr-se-3",
+          "type": "SPAN",
+          "name": "lookup_order",
+          "input": {
+            "order_id": "D-3"
+          },
+          "output": "order not found",
+          "level": "DEFAULT",
+          "start_time": "2026-11-06T12:02:10+00:00",
+          "cost_usd": 0.01
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "tr-1", "name": "order-lookup", "timestamp": "2026-11-06T10:00:00.000Z",
+  "tags": ["route:order-lookup"], "sessionId": "thread-a", "totalCost": 0.12,
+  "observations": [
+    {"id": "ob-1a", "traceId": "tr-1", "type": "SPAN", "name": "fetch_order",
+     "startTime": "2026-11-06T10:00:00.000Z", "endTime": "2026-11-06T10:00:10.000Z",
+     "level": "DEFAULT", "input": {"order_id": "42"}, "output": {"status": "ok"},
+     "calculatedTotalCost": 0.05},
+    {"id": "ob-1b", "traceId": "tr-1", "type": "GENERATION", "name": "decide",
+     "startTime": "2026-11-06T10:00:10.000Z", "endTime": "2026-11-06T10:00:30.000Z",
+     "level": "DEFAULT", "input": null, "output": null, "calculatedTotalCost": 0.06}
+  ]
+}
