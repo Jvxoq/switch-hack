@@ -34,8 +34,10 @@ x-langfuse-env: &langfuse-env
   TELEMETRY_ENABLED: "false"
 
 services:
+  # Langfuse is pinned to major 3. Langfuse 4 runs events-only and returns 404 for /api/public/traces,
+  # which tripwire/langfuse_client.py reads. Do not raise LANGFUSE_IMAGE_TAG to 4 without changing the client.
   langfuse-web:
-    image: docker.langfuse.com/langfuse/langfuse:${LANGFUSE_IMAGE_TAG:-4}
+    image: docker.langfuse.com/langfuse/langfuse:${LANGFUSE_IMAGE_TAG:-3}
     restart: always
     depends_on: &langfuse-deps
       postgres:
@@ -71,7 +73,7 @@ services:
       start_period: 30s
 
   langfuse-worker:
-    image: docker.langfuse.com/langfuse/langfuse-worker:${LANGFUSE_IMAGE_TAG:-4}
+    image: docker.langfuse.com/langfuse/langfuse-worker:${LANGFUSE_IMAGE_TAG:-3}
     restart: always
     depends_on: *langfuse-deps
     environment:
