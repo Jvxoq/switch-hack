@@ -1,18 +1,21 @@
 """Containment service (`:8700`): the incident store and the only writer of `flags.json`.
 
-Section 3 of tasks.md is the contract. Every read-modify-write of `incidents.json` and `flags.json` runs under
-one process-wide lock, so the service must run with a single worker. Handlers are plain `def` routes: they run
+Section 3 of tasks.md is the contract. Route flags are derived from the active incident actions, never stored
+per incident. Every read-modify-write runs under one process-wide lock on a copy of the state, which is persisted
+before it is swapped in, so the service must run with a single worker. Handlers are plain `def` routes: they run
 in FastAPI's thread pool, and the lock is a `threading.Lock`.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, get_args
@@ -27,8 +30,6 @@ from tripwire.contracts.config import TripwireConfig, load_config
 from tripwire.contracts.models import (
     ACTIONS,
     TRANSITIONS,
-    Action,
-    ActionSource,
     Incident,
     IncidentState,
     incident_from_dict,
@@ -64,6 +65,8 @@ INCIDENTS_FILE = "incidents.json"
 FLAGS_FILE = "flags.json"
 LOG_FILE = "containment.log"
 
+logger = logging.getLogger(__name__)
+
 
 class Refused(ContainmentRefused):
     """A refusal with the HTTP status the service answers with."""
@@ -97,8 +100,49 @@ def _read_json(path: Path, default: Any) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@dataclass
+class _State:
+    """Everything persisted in `incidents.json`. Route flags are derived from `incidents`, never stored."""
+
+    incidents: dict[str, Incident]
+    next_number: int = 1
+    owner_rounds: dict[str, int] = field(default_factory=dict)
+
+
+def _combine(flags: dict[str, Any], action: str) -> None:
+    """Fold one active action into a route's flags. Any disable disables; the strictest step cap wins."""
+    if action == "disable_route":
+        flags["disabled"] = True
+    elif action == "cap_max_steps":
+        current = flags["max_steps"]
+        flags["max_steps"] = MAX_STEPS_CAP if current is None else min(current, MAX_STEPS_CAP)
+    elif action == "fallback_model":
+        flags["model"] = FALLBACK_MODEL
+
+
+def derive_flags(route_names: Iterable[str], incidents: Iterable[Incident]) -> dict[str, dict[str, Any]]:
+    """Route flags = defaults + every active incident action on that route. Pure, so it is recomputed on each change."""
+    routes = {name: _default_flags() for name in route_names}
+    for inc in incidents:
+        if inc.action is not None:
+            _combine(routes.setdefault(inc.route, _default_flags()), inc.action)
+    return routes
+
+
+def _incidents_payload(state: _State) -> dict[str, Any]:
+    return {
+        "next_number": state.next_number,
+        "owner_rounds": state.owner_rounds,
+        "incidents": {key: incident_to_dict(value) for key, value in state.incidents.items()},
+    }
+
+
 class ContainmentStore:
-    """Incident store and flags. Every public method takes the one lock; nothing else touches the files."""
+    """Incident store and flags. Every public method takes the one lock; nothing else touches the files.
+
+    A change works on a copy of `_state`. It is persisted first, then swapped in, so a failed write leaves
+    memory and disk as they were.
+    """
 
     def __init__(self, cfg: TripwireConfig, clock: Clock, state_dir: Path) -> None:
         self._cfg = cfg
@@ -107,17 +151,14 @@ class ContainmentStore:
         self._lock = threading.Lock()
         self._dir.mkdir(parents=True, exist_ok=True)
 
-        raw_incidents = _read_json(self._dir / INCIDENTS_FILE, {})
-        self._next_number: int = raw_incidents.get("next_number", 1)
-        self._owner_rounds: dict[str, int] = dict(raw_incidents.get("owner_rounds", {}))
-        self._incidents: dict[str, Incident] = {
-            key: incident_from_dict(value) for key, value in raw_incidents.get("incidents", {}).items()
-        }
-
-        raw_flags = _read_json(self._dir / FLAGS_FILE, {})
-        self._flags: dict[str, dict[str, Any]] = dict(raw_flags.get("routes", {}))
-        # incident id -> flags of its route before its active action (restored on replace or revert)
-        self._snapshots: dict[str, dict[str, Any]] = dict(raw_flags.get("snapshots", {}))
+        raw = _read_json(self._dir / INCIDENTS_FILE, {})
+        self._state = _State(
+            incidents={key: incident_from_dict(value) for key, value in raw.get("incidents", {}).items()},
+            next_number=raw.get("next_number", 1),
+            owner_rounds=dict(raw.get("owner_rounds", {})),
+        )
+        # Older state files may hold a "snapshots" key from the per-incident design. It is ignored.
+        self._flags = self._derive(self._state)
 
     # ---- incidents -------------------------------------------------------
 
@@ -125,30 +166,32 @@ class ContainmentStore:
         with self._lock:
             if rule not in RULES:
                 raise Refused(f"unknown rule {rule!r}", 422)
-            for inc in self._incidents.values():
+            new = deepcopy(self._state)
+            for inc in new.incidents.values():
                 if inc.rule == rule and inc.route == route and inc.state not in CLOSED_STATES:
                     raise Refused(f"an open incident already exists for rule {rule} on route {route}")
-            inc = Incident(id=f"INC-{self._next_number}", rule=rule, route=route, opened_at=opened_at)
-            self._next_number += 1
-            self._incidents[inc.id] = inc
-            self._persist_incidents()
+            inc = Incident(id=f"INC-{new.next_number}", rule=rule, route=route, opened_at=opened_at)
+            new.next_number += 1
+            new.incidents[inc.id] = inc
+            self._commit(new)
             return deepcopy(inc)
 
     def get(self, incident_id: str) -> Incident:
         with self._lock:
-            return deepcopy(self._require(incident_id))
+            return deepcopy(self._require(self._state, incident_id))
 
     def list(self, open_only: bool = True) -> list[Incident]:
         with self._lock:
             return [
                 deepcopy(inc)
-                for inc in self._incidents.values()
+                for inc in self._state.incidents.values()
                 if not open_only or inc.state not in CLOSED_STATES
             ]
 
     def update(self, incident_id: str, fields: dict[str, Any]) -> Incident:
         with self._lock:
-            inc = self._require(incident_id)
+            new = deepcopy(self._state)
+            inc = self._require(new, incident_id)
             for name in fields:
                 if name not in PATCHABLE:
                     raise Refused(f"field {name!r} cannot be changed with PATCH", 422)
@@ -159,17 +202,18 @@ class ContainmentStore:
                 if name in PATCH_DATETIME_FIELDS and isinstance(value, str):
                     value = _parse_datetime(name, value)
                 setattr(inc, name, deepcopy(value))
-            self._persist_incidents()
+            self._commit(new)
             return deepcopy(inc)
 
     def reopen(self, incident_id: str) -> Incident:
         with self._lock:
-            inc = self._require(incident_id)
+            new = deepcopy(self._state)
+            inc = self._require(new, incident_id)
             if inc.state not in REOPENABLE:
                 raise Refused(f"cannot reopen {incident_id} from state {inc.state}")
             inc.ask_round += 1
             inc.state = "awaiting_approval"
-            self._persist_incidents()
+            self._commit(new)
             return deepcopy(inc)
 
     # ---- actions ---------------------------------------------------------
@@ -183,21 +227,19 @@ class ContainmentStore:
         spend_usd: float,
     ) -> dict[str, Any]:
         with self._lock:
-            inc = self._require(incident_id)
+            new = deepcopy(self._state)
+            inc = self._require(new, incident_id)
             if action not in ACTIONS:
                 raise Refused(f"action {action!r} is not on the menu", 422)
             if source == "owner":
-                self._check_owner_action(inc, approver)
+                self._check_owner_action(new, inc, approver)
             elif source == "auto_pause":
                 self._check_auto_pause(inc, action, spend_usd)
             else:
                 raise Refused(f"unknown action source {source!r}", 422)
 
-            # Replace, don't stack: restore what the active action changed, then apply the new one.
-            if inc.action is not None:
-                self._restore(inc)
-            self._snapshots[inc.id] = deepcopy(self._route_flags(inc.route))
-            self._apply_effect(inc.route, action)
+            # Replace, don't stack: the new action takes the incident's slot. Route flags are recomputed from
+            # every active action, so the old one stops counting and the others are untouched.
             inc.action = action  # type: ignore[assignment]
             inc.action_source = source  # type: ignore[assignment]
             if source == "owner":
@@ -206,33 +248,34 @@ class ContainmentStore:
                 inc.approver = approver
                 inc.approved_at = now
                 inc.contained_at = now
-                self._owner_rounds[inc.id] = inc.ask_round
+                new.owner_rounds[inc.id] = inc.ask_round
             else:
                 inc.state = "auto_paused"
                 inc.auto_paused = True
-            self._persist(incidents=True, flags=True)
-            self._log(
-                "apply",
-                inc.id,
-                action=action,
-                source=source,
-                approver=approver,
-                spend_usd=spend_usd,
+            self._commit(
+                new,
+                {
+                    "event": "apply",
+                    "incident": inc.id,
+                    "action": action,
+                    "source": source,
+                    "approver": approver,
+                    "spend_usd": spend_usd,
+                },
             )
             return self._flags_view()
 
     def revert(self, incident_id: str, by: str | None) -> dict[str, Any]:
         with self._lock:
-            inc = self._require(incident_id)
+            new = deepcopy(self._state)
+            inc = self._require(new, incident_id)
             if inc.action is None:
                 raise Refused(f"{incident_id} has no active action to revert")
             self._check_approver(by, "revert")
-            self._restore(inc)
             inc.action = None
             inc.action_source = None
             inc.state = "verifying"
-            self._persist(incidents=True, flags=True)
-            self._log("revert", inc.id, by=by)
+            self._commit(new, {"event": "revert", "incident": inc.id, "by": by})
             return self._flags_view()
 
     def flags(self) -> dict[str, Any]:
@@ -241,8 +284,8 @@ class ContainmentStore:
 
     # ---- helpers (call only with the lock held) --------------------------
 
-    def _require(self, incident_id: str) -> Incident:
-        inc = self._incidents.get(incident_id)
+    def _require(self, state: _State, incident_id: str) -> Incident:
+        inc = state.incidents.get(incident_id)
         if inc is None:
             raise Refused(f"unknown incident {incident_id}", 404)
         return inc
@@ -259,11 +302,11 @@ class ContainmentStore:
         if new_state not in TRANSITIONS.get(inc.state, frozenset()):
             raise Refused(f"transition {inc.state} -> {new_state} is not allowed")
 
-    def _check_owner_action(self, inc: Incident, approver: str | None) -> None:
+    def _check_owner_action(self, state: _State, inc: Incident, approver: str | None) -> None:
         self._check_approver(approver, "approve")
         if inc.state != "awaiting_approval":
             raise Refused(f"owner actions need state awaiting_approval, not {inc.state}")
-        if self._owner_rounds.get(inc.id) == inc.ask_round:
+        if state.owner_rounds.get(inc.id) == inc.ask_round:
             raise Refused(f"an owner action was already accepted in ask round {inc.ask_round}")
 
     def _check_approver(self, who: str | None, verb: str) -> None:
@@ -289,49 +332,44 @@ class ContainmentStore:
         if not (budget_hit or elapsed_min >= auto.minutes):
             raise Refused("auto-pause thresholds not reached")
 
-    def _route_flags(self, route: str) -> dict[str, Any]:
-        return self._flags.setdefault(route, _default_flags())
-
-    def _restore(self, inc: Incident) -> None:
-        self._flags[inc.route] = self._snapshots.pop(inc.id)
-
-    def _apply_effect(self, route: str, action: str) -> None:
-        flags = self._route_flags(route)
-        if action == "disable_route":
-            flags["disabled"] = True
-        elif action == "cap_max_steps":
-            flags["max_steps"] = MAX_STEPS_CAP
-        elif action == "fallback_model":
-            flags["model"] = FALLBACK_MODEL
+    def _derive(self, state: _State) -> dict[str, dict[str, Any]]:
+        return derive_flags(self._cfg.routes, state.incidents.values())
 
     def _flags_view(self) -> dict[str, Any]:
-        routes = {name: _default_flags() for name in self._cfg.routes}
-        routes.update(deepcopy(self._flags))
-        return {"routes": routes}
+        return {"routes": deepcopy(self._flags)}
 
-    def _persist_incidents(self) -> None:
-        _write_json_atomic(
-            self._dir / INCIDENTS_FILE,
-            {
-                "next_number": self._next_number,
-                "owner_rounds": self._owner_rounds,
-                "incidents": {key: incident_to_dict(value) for key, value in self._incidents.items()},
-            },
-        )
+    def _commit(self, new: _State, log_entry: dict[str, Any] | None = None) -> None:
+        """Persist `new` with its derived flags, then make both current.
 
-    def _persist_flags(self) -> None:
-        _write_json_atomic(self._dir / FLAGS_FILE, {"routes": self._flags, "snapshots": self._snapshots})
+        Memory changes only after the incident file, the flags file and the log line are all written. If one
+        write fails, the files already written are restored from the previous state and the error propagates.
+        """
+        flags = self._derive(new)
+        previous, previous_flags = self._state, self._flags
+        try:
+            self._write_files(new, flags)
+            if log_entry is not None:
+                self._append_log(log_entry)
+        except BaseException:
+            self._restore_files(previous, previous_flags)
+            raise
+        self._state = new
+        self._flags = flags
 
-    def _persist(self, *, incidents: bool, flags: bool) -> None:
-        if flags:
-            self._persist_flags()
-        if incidents:
-            self._persist_incidents()
+    def _write_files(self, state: _State, flags: dict[str, dict[str, Any]]) -> None:
+        _write_json_atomic(self._dir / INCIDENTS_FILE, _incidents_payload(state))
+        _write_json_atomic(self._dir / FLAGS_FILE, {"routes": flags})
 
-    def _log(self, event: str, incident_id: str, **details: Any) -> None:
-        entry = {"ts": self._clock.now().isoformat(), "event": event, "incident": incident_id, **details}
+    def _restore_files(self, state: _State, flags: dict[str, dict[str, Any]]) -> None:
+        try:
+            self._write_files(state, flags)
+        except OSError:
+            logger.exception("could not restore containment files after a failed write; restart reloads incidents.json")
+
+    def _append_log(self, entry: dict[str, Any]) -> None:
+        line = {"ts": self._clock.now().isoformat(), **entry}
         with (self._dir / LOG_FILE).open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, sort_keys=True) + "\n")
+            handle.write(json.dumps(line, sort_keys=True) + "\n")
 
 
 def _parse_datetime(name: str, value: str) -> datetime:

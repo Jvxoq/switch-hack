@@ -8,6 +8,7 @@ means the fake has drifted.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from collections.abc import Iterator
@@ -397,3 +398,98 @@ def test_http_client_maps_unknown_incident_to_refusal(http_client: ContainmentHT
     with pytest.raises(ContainmentRefused) as refused:
         http_client.get("INC-404")
     assert refused.value.reason == "unknown incident INC-404"
+
+
+# ---- O1: flags come from every active action on the route -----------------
+
+# The fake in tests/fakes/containment.py still restores per-route snapshots, so this case runs on the HTTP service
+# only. Fixing the fake is a separate change: it is outside the files this task may edit.
+
+
+def test_T12_O1_revert_keeps_other_incident_action(http_client: ContainmentHTTPClient, clock: FakeClock) -> None:
+    """Two incidents on one route: reverting one must not drop the other's active action.
+
+    Repro from docs/verification.md O1: loop disable, cost_spike cap, revert loop. The route must stay capped.
+    """
+    loop = _awaiting_approval(http_client, clock, rule="loop")
+    http_client.apply(loop.id, "disable_route", "owner", "jason", 0.0)
+    spend = _awaiting_approval(http_client, clock, rule="cost_spike")
+    http_client.apply(spend.id, "cap_max_steps", "owner", "jason", 0.0)
+    assert http_client.flags()["routes"][ROUTE] == {"disabled": True, "max_steps": 20, "model": None}
+
+    http_client.revert(loop.id, "jason")
+
+    assert http_client.flags()["routes"][ROUTE] == {"disabled": False, "max_steps": 20, "model": None}
+    assert http_client.get(spend.id).action == "cap_max_steps"
+    http_client.revert(spend.id, "jason")
+    assert http_client.flags()["routes"][ROUTE] == {"disabled": False, "max_steps": None, "model": None}
+
+
+def test_O1_flags_file_matches_active_actions_after_restart(
+    cfg: TripwireConfig, clock: FakeClock, tmp_path: Path
+) -> None:
+    """flags.json mirrors the flags derived from active actions, and a restart derives the same flags."""
+    with TestClient(create_app(cfg, clock, tmp_path)) as http:
+        client = ContainmentHTTPClient(http=http)
+        loop = _awaiting_approval(client, clock, rule="loop")
+        client.apply(loop.id, "disable_route", "owner", "jason", 0.0)
+        spend = _awaiting_approval(client, clock, rule="cost_spike")
+        client.apply(spend.id, "cap_max_steps", "owner", "jason", 0.0)
+        client.revert(loop.id, "jason")
+        flags = client.flags()
+
+    stored = json.loads((tmp_path / "flags.json").read_text(encoding="utf-8"))
+    assert stored == flags
+    assert "snapshots" not in stored
+    with TestClient(create_app(cfg, clock, tmp_path)) as http:
+        assert ContainmentHTTPClient(http=http).flags() == flags
+
+
+# ---- O2: persist before swapping memory -----------------------------------
+
+
+@pytest.mark.parametrize("failing_file", ["incidents.json", "flags.json"])
+def test_O2_failed_write_leaves_memory_and_files_unchanged(
+    failing_file: str,
+    cfg: TripwireConfig,
+    clock: FakeClock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An owner action whose write fails changes neither memory nor disk, whichever file fails.
+
+    When flags.json fails, incidents.json was already written and must be restored, so the files agree again.
+    """
+    with TestClient(create_app(cfg, clock, tmp_path)) as http:
+        client = ContainmentHTTPClient(http=http)
+        # A first accepted action makes both files exist before the failing write.
+        other = _awaiting_approval(client, clock, rule="silent_error")
+        client.apply(other.id, "disable_route", "owner", "jason", 0.0)
+        inc = _awaiting_approval(client, clock)
+        flags_before = client.flags()
+        incident_before = client.get(inc.id)
+    incidents_bytes = (tmp_path / "incidents.json").read_bytes()
+    flags_bytes = (tmp_path / "flags.json").read_bytes()
+    log_bytes = (tmp_path / "containment.log").read_bytes()
+
+    real_replace = os.replace
+
+    def failing_replace(src: Any, dst: Any) -> None:
+        if Path(dst).name == failing_file:
+            raise OSError("disk full")
+        real_replace(src, dst)
+
+    with TestClient(create_app(cfg, clock, tmp_path)) as http:
+        client = ContainmentHTTPClient(http=http)
+        monkeypatch.setattr(app_module.os, "replace", failing_replace)
+        with pytest.raises(OSError, match="disk full"):
+            client.apply(inc.id, "cap_max_steps", "owner", "jason", 0.0)
+        monkeypatch.undo()
+
+        assert client.flags() == flags_before
+        assert client.get(inc.id) == incident_before
+
+    assert (tmp_path / "incidents.json").read_bytes() == incidents_bytes
+    assert (tmp_path / "flags.json").read_bytes() == flags_bytes
+    assert (tmp_path / "containment.log").read_bytes() == log_bytes
+    assert [p.name for p in tmp_path.glob("*.tmp")] == []
