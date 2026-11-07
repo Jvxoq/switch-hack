@@ -1,4 +1,4 @@
-"""Switch HTTP client: the real `SwitchPoster` (section 3 and W01 of tasks.md).
+"""Switch HTTP client: the real `SwitchPoster`.
 
 Two posting paths, both selectable (docs/switch-api.md, "Alert path"):
 - path "agent" (PREFERRED, `SwitchClient`): the detector registers as its own Switch agent and posts with its API key.
@@ -8,7 +8,7 @@ Two posting paths, both selectable (docs/switch-api.md, "Alert path"):
 `status_mode` picks how `set_status` works: "reply" (default, posts `Status: <state>` in the thread) or
 "edit" (edits the first message). The docs document no edit operation, so "reply" is the default.
 
-Provisional until H00 confirms:
+Provisional, not confirmed against the real Switch API:
 - thread_ref: the agent path reads the thread id from the POST response (`thread_id`, then `message.thread_id`,
   then the message `id`). The response shape is not documented.
 - replies: the agent path sends `thread_id` in the body of POST /agents/{id}/message to stay in the thread.
@@ -106,8 +106,6 @@ class SwitchClient(_Base):
             transport=transport,
         )
 
-    # SwitchPoster port -------------------------------------------------
-
     def post_alert(self, incident: Incident, text: str) -> str | None:
         content = _ensure_address(text)
         if self.dry_run:
@@ -139,8 +137,6 @@ class SwitchClient(_Base):
             self._dry("reply", str(body))
             return
         self._post(f"/agents/{self.agent_id}/message", body)
-
-    # HTTP --------------------------------------------------------------
 
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         response = self._http.post(
@@ -184,8 +180,6 @@ class SlackFallbackClient(_Base):
             transport=transport,
         )
 
-    # SwitchPoster port -------------------------------------------------
-
     def post_alert(self, incident: Incident, text: str) -> str | None:
         content = _ensure_address(text)
         if self.dry_run:
@@ -210,8 +204,6 @@ class SlackFallbackClient(_Base):
             self._dry("reply", str(body))
             return
         self._call("chat.postMessage", body)
-
-    # HTTP --------------------------------------------------------------
 
     def _call(self, method: str, body: dict[str, Any]) -> dict[str, Any]:
         response = self._http.post(

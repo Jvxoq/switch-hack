@@ -1,4 +1,4 @@
-"""Silent-error rule (R02).
+"""Silent-error rule.
 
 An observation is a silent error when its output matches any configured pattern (case-insensitive substring)
 while its level is not ERROR. A route fires when `count` silent errors fall inside a sliding window of

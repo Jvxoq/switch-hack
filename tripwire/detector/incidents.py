@@ -1,4 +1,4 @@
-"""Incident manager: turns rule hits into one incident per (rule, route) and posts the Switch alerts. Owned by E01.
+"""Incident manager: turns rule hits into one incident per (rule, route) and posts the Switch alerts.
 
 The containment service is the only incident store. This module keeps no incident state of its own, except the
 set of queued incidents it has already nudged (in memory; a restart may repeat one nudge, never a state change).
@@ -16,7 +16,7 @@ from tripwire.contracts.ports import Clock, ContainmentClient, ContainmentRefuse
 
 log = logging.getLogger(__name__)
 
-# An incident in one of these states is using Tripwire's attention; others queue behind it (decision #25).
+# An incident in one of these states is using Tripwire's attention; others queue behind it.
 _BUSY = frozenset({"investigating", "awaiting_approval"})
 _SHOWN_TRACES = 3
 
@@ -48,8 +48,6 @@ class IncidentManager:
                 events.append(f"ingest failed for {rule} on {route}")
         self._nudge_next_queued()
         return events
-
-    # ---- one (rule, route) group ----------------------------------------
 
     def _ingest_group(self, rule: str, route: str, costs: dict[str, float]) -> None:
         incident = self._find_open(rule, route)
@@ -99,8 +97,6 @@ class IncidentManager:
             if incident.rule == rule and incident.route == route and incident.state not in CLOSED_STATES:
                 return incident
         return None
-
-    # ---- alerts and queue ------------------------------------------------
 
     def _alert(self, incident: Incident) -> None:
         """Post the alert for a new incident. If another incident is using Tripwire, queue this one and say so."""

@@ -1,4 +1,4 @@
-"""Detector: verify, resolve, reopen (E03).
+"""Detector: verify, resolve, reopen.
 
 Moves incidents after an action through `verifying` -> `resolved`, reopens them when the rule fires again,
 keeps a disabled route's status up to date, and records every handed-off incident.
@@ -42,6 +42,7 @@ class Verifier:
         # incidents whose record was already written in this process.
         self._status_posted: set[tuple[str, str]] = set()
         self._recorded: set[str] = set()
+        self._unthreaded_status_logged: set[str] = set()
 
     def tick(self, incidents: Iterable[Incident]) -> list[str]:
         """Advance each incident one step. Returns one line per change, for logs and tests."""
@@ -78,8 +79,6 @@ class Verifier:
         self._recorded.add(inc.id)
         return f"{inc.id}: recorded (handed_off)"
 
-    # ---- internals -------------------------------------------------------
-
     def _advance(self, inc: Incident) -> str | None:
         now = self._clock.now()
         if inc.state == "handed_off":
@@ -110,7 +109,12 @@ class Verifier:
     def _post_disabled_status(self, inc: Incident) -> str | None:
         # A disabled route is always quiet, so quiet proves nothing: wait for the owner's revert.
         text = f"route disabled — owner runs revert {inc.id} once the fix is live"
-        if inc.thread_ref is None or (inc.id, text) in self._status_posted:
+        if inc.thread_ref is None:
+            if inc.id not in self._unthreaded_status_logged:
+                self._unthreaded_status_logged.add(inc.id)
+                log.warning("no Switch thread for %s: disabled-route status not posted", inc.id)
+            return None
+        if (inc.id, text) in self._status_posted:
             return None
         self._switch.set_status(inc.thread_ref, text)
         self._status_posted.add((inc.id, text))
@@ -121,5 +125,7 @@ class Verifier:
         self._reply(inc, text)
 
     def _reply(self, inc: Incident, text: str) -> None:
-        if inc.thread_ref is not None:
-            self._switch.reply(inc.thread_ref, text)
+        if inc.thread_ref is None:
+            log.warning("no Switch thread for %s: dropped reply %r", inc.id, text)
+            return
+        self._switch.reply(inc.thread_ref, text)

@@ -1,4 +1,4 @@
-"""Incident record writer: the final thread message and the `incidents.log` JSONL line (task P01)."""
+"""Incident record writer: the final thread message and the JSONL line in the configured records file."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def render(incident: Incident) -> str:
 
 
 def append(incident: Incident, path: str | Path) -> None:
-    """Append one JSON line for the incident to `incidents.log` (JSONL)."""
+    """Append one JSON line for the incident to the records file at `path` (JSONL)."""
     line = json.dumps(_record(incident), sort_keys=True)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

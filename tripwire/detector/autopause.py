@@ -1,4 +1,4 @@
-"""Auto-pause and the hourly ceiling (E02). Runs once per detector poll, after the rules have run.
+"""Auto-pause and the hourly ceiling. Runs once per detector poll, after the rules have run.
 
 Auto-pause: each open incident with no active action and no earlier auto-pause gets `disable_route` when its
 spend reaches `budget_fraction` of the route's loss budget, or when it is `auto_pause.minutes` old with no owner
@@ -97,17 +97,20 @@ def _emit_ceiling_hits(
         if spend < route_cfg.hourly_ceiling_usd:
             continue
         newest = max(hour, key=lambda t: t.start_time)
-        ingest(
-            RuleHit(
-                rule=CEILING_RULE,
-                route=route,
-                trace_id=newest.id,
-                observation_ids=[],
-                cost_usd=spend,
-                at=now,
-                detail=f"route spent ${spend:.2f} in the last hour, ceiling ${route_cfg.hourly_ceiling_usd:.2f}",
-            )
+        hit = RuleHit(
+            rule=CEILING_RULE,
+            route=route,
+            trace_id=newest.id,
+            observation_ids=[],
+            cost_usd=spend,
+            at=now,
+            detail=f"route spent ${spend:.2f} in the last hour, ceiling ${route_cfg.hourly_ceiling_usd:.2f}",
         )
+        try:
+            ingest(hit)
+        except Exception:
+            # One route's failed ceiling alert must not stop the other routes or the pause loop.
+            log.exception("hourly ceiling ingest failed for route %s; skipped", route)
 
 
 def _route_hour_spend(traces: list[Trace], route: str, now: datetime) -> float:

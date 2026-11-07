@@ -14,6 +14,9 @@ from tripwire.contracts.models import (
     Trace,
 )
 
+# Approver recorded when the owner approves in chat. It skips the owners check: the Switch agent checks the sender.
+SWITCH_APPROVAL = "switch-approval"
+
 
 class ContainmentRefused(Exception):
     """The containment service refused a request (HTTP 409/422 with a `reason`)."""

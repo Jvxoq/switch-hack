@@ -1,4 +1,4 @@
-"""Containment service and HTTP client (S01). Section 3 of tasks.md is the contract.
+"""Containment service and HTTP client.
 
 Action-rule cases run twice through the `containment` fixture: once against `FakeContainment` and once against
 the real service over HTTP (FastAPI TestClient, no socket). A case that passes on one and fails on the other
@@ -27,7 +27,7 @@ from tripwire.containment.app import create_app
 from tripwire.containment.client import ContainmentHTTPClient
 from tripwire.contracts.config import TripwireConfig, load_config_dict
 from tripwire.contracts.models import Incident
-from tripwire.contracts.ports import ContainmentClient, ContainmentRefused
+from tripwire.contracts.ports import SWITCH_APPROVAL, ContainmentClient, ContainmentRefused
 
 # The TestClient warns that httpx is deprecated in favour of httpx2. The service is tested over httpx here.
 pytestmark = pytest.mark.filterwarnings("ignore:Using `httpx` with `starlette.testclient`")
@@ -225,7 +225,7 @@ def test_owner_action_needs_owner_approver(containment: ContainmentClient, clock
 
 def test_switch_approval_skips_owner_check(containment: ContainmentClient, clock: FakeClock) -> None:
     inc = _awaiting_approval(containment, clock)
-    containment.apply(inc.id, "cap_max_steps", "owner", "switch-approval", 0.0)
+    containment.apply(inc.id, "cap_max_steps", "owner", SWITCH_APPROVAL, 0.0)
     assert containment.get(inc.id).state == "contained"
 
 
@@ -251,6 +251,58 @@ def test_illegal_patch_transitions_refused(containment: ContainmentClient, clock
         containment.update(inc.id, state="contained")
     with pytest.raises(ContainmentRefused, match="cannot be changed with PATCH"):
         containment.update(inc.id, approver="jason")
+
+
+BAD_PATCH_VALUES = [
+    pytest.param({"hit_count": "x"}, id="hit_count_str"),
+    pytest.param({"hit_count": True}, id="hit_count_bool"),
+    pytest.param({"hit_count": None}, id="hit_count_null"),
+    pytest.param({"trace_ids": 5}, id="trace_ids_int"),
+    pytest.param({"trace_ids": ["t1", 2]}, id="trace_ids_mixed"),
+    pytest.param({"cost_usd": "1.5"}, id="cost_str"),
+    pytest.param({"rejections": 1.5}, id="rejections_float"),
+    pytest.param({"thread_ref": 7}, id="thread_ref_int"),
+    pytest.param({"pr_url": ["u"]}, id="pr_url_list"),
+    pytest.param({"state": "nonsense"}, id="state_unknown"),
+    pytest.param({"state": None}, id="state_null"),
+    pytest.param({"quiet_since": "yesterday"}, id="quiet_since_text"),
+    pytest.param({"quiet_since": "2026-01-01T00:00:00"}, id="quiet_since_naive"),
+    pytest.param({"resolved_at": 12}, id="resolved_at_int"),
+]
+
+
+@pytest.mark.parametrize("fields", BAD_PATCH_VALUES)
+def test_patch_bad_value_refused(containment: ContainmentClient, clock: FakeClock, fields: dict[str, Any]) -> None:
+    """A wrong type persisted to incidents.json would break every reader later."""
+    inc = _open(containment, clock)
+
+    with pytest.raises(ContainmentRefused, match=next(iter(fields))):
+        containment.update(inc.id, **fields)
+
+    assert containment.get(inc.id) == inc
+
+
+def test_patch_bad_value_writes_nothing(http_app: TestClient, clock: FakeClock, tmp_path: Path) -> None:
+    client = ContainmentHTTPClient(http=http_app)
+    inc = _open(client, clock)
+    before = (tmp_path / "incidents.json").read_text()
+
+    response = http_app.patch(f"/incidents/{inc.id}", json={"hit_count": "x"})
+
+    assert response.status_code == 422
+    assert "hit_count" in response.json()["reason"]
+    assert (tmp_path / "incidents.json").read_text() == before
+
+
+def test_patch_null_clears_datetime(containment: ContainmentClient, clock: FakeClock) -> None:
+    inc = _open(containment, clock)
+    when = clock.now()
+    containment.update(inc.id, quiet_since=when)
+    assert containment.get(inc.id).quiet_since == when
+
+    containment.update(inc.id, quiet_since=None)
+
+    assert containment.get(inc.id).quiet_since is None
 
 
 def test_contained_to_verifying_only_for_non_disabling_action(containment: ContainmentClient, clock: FakeClock) -> None:

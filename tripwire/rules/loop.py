@@ -1,4 +1,4 @@
-"""Loop rule (R01).
+"""Loop rule.
 
 Judged within one trace, running or finished. The rule fires for a trace when either:
 
