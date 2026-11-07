@@ -2,13 +2,13 @@
 
 This is the checklist for running Tripwire on your own laptop, with the Switch Console and Slack. Everything runs locally. Nothing needs a public address.
 
-Status: **provisional.** Nothing here has been run against a live Switch room yet. Each step that depends on an unconfirmed Switch behaviour is marked **UNCONFIRMED**. The live checks at the end (steps 13 to 14) are what confirm or correct them. Facts come from [docs/switch-api.md](switch-api.md), which lists the sources and what is still unknown.
+Status: **partly verified.** H00-sim ran prerequisite 1 (self-host), steps 5, 6 and 11, and the REST half of live checks Q1 and Q2, against a self-hosted Switch 0.31.0 on 2026-11-07 (see [docs/switch-api.md](switch-api.md), last section). Steps that need the Console, Slack or the Claude Code provider are still **UNCONFIRMED** and are the human's live test. The live checks at the end (steps 13 to 14) settle the rest.
 
 ## Prerequisites
 
 Do these first. Each one is a hard blocker.
 
-1. **Switch Console is running on this laptop.** Use the self-hosted server. Its API listens on port 8000 and the Gateway on 3000, both bound to 127.0.0.1. The start command is the one the Console documentation gives; this guide uses the URL `http://127.0.0.1:8000`.
+1. **A self-hosted Switch server is running on this laptop.** Its API listens on port 8000 and the Gateway on 3000, both bound to 127.0.0.1. This guide uses `http://127.0.0.1:8000`. H00-sim verified this setup on 2026-11-07 with Switch 0.31.0: take `deploy/local/standalone-docker-compose.yml` from github.com/sandbox-quantum/switch, set `SWITCH_VERSION=0.31.0` and `FEATURE_FLAGS_ENABLED` empty, and start it with `docker compose --profile gateway up -d`. Create the owner account and a registration key in the Gateway (API Keys page). Set `GATEWAY_PUBLIC_URL` to the API address. Switch Console can connect to this server as well (Add a server, Connect to an existing server).
 2. **Slack is connected in the Console.** Connect > Slack, using the Switch Slack manifest (Socket Mode, no request URL). You need the `xapp-` app token, the `xoxb-` bot token and the workspace id `T...`. Create a channel `#agent-incidents` and run `/invite @Agent Switch` in it.
 3. **Claude Code is installed and signed in on your Pro or Max subscription.** Open any agent's page in the Console, find **Provider sign-in**, and run the sign-in command the Console shows for Claude Code. Click **Recheck** until it reads signed in.
 4. **Tools on this laptop:** `git`, `uv`, Docker with Compose, and `openssl`.
@@ -62,7 +62,7 @@ SWITCH_BASE_URL=http://127.0.0.1:8000 SWITCH_REGISTRATION_KEY=<paste-key> \
   uv run python scripts/register_detector.py
 ```
 
-Expected output: `registered tripwire-detector as agent id agt_...`. The script writes `SWITCH_AGENT_ID` and `SWITCH_TOKEN` into `.env` and does not print the agent key.
+Expected output: `registered tripwire-detector as agent id <uuid>`. Verified on 0.31.0: a second run without `--overwrite` stops with the 409 message, and `--overwrite` keeps the id and rotates the key. The script writes `SWITCH_AGENT_ID` and `SWITCH_TOKEN` into `.env` and does not print the agent key.
 
 Check: `grep -E '^SWITCH_(AGENT_ID|TOKEN)=' .env` shows both lines with values.
 
@@ -74,7 +74,7 @@ If the name is already registered, the script says so and stops. Re-run with `--
 2. Link the room to the Slack channel `#agent-incidents`.
 3. In the room, run `!invite-agent @tripwire-detector`.
 
-Now get the room id. The docs name a `list_rooms` operation but not its arguments, so this may need adjusting (**UNCONFIRMED**):
+Now get the room id. Verified on 0.31.0 with an empty body and the detector's key. The answer is `{"result": [{"room_id": ..., "name": ...}]}`:
 
 ```bash
 set -a; . ./.env; set +a
@@ -82,7 +82,7 @@ curl -sS -X POST "$SWITCH_BASE_URL/agents/$SWITCH_AGENT_ID/ops/list_rooms" \
   -H "Authorization: Bearer $SWITCH_TOKEN" -H 'Content-Type: application/json' -d '{}'
 ```
 
-Find `agent-incidents` in the answer and copy its id into `.env` as `SWITCH_ROOM_ID=`.
+Find the entry whose `name` is `agent-incidents` and copy its `room_id` into `.env` as `SWITCH_ROOM_ID=`.
 
 Also set these in `.env` now:
 
@@ -129,7 +129,7 @@ Check: the agent page shows Provider sign-in as signed in.
 
 On the Tripwire agent's page, under General, open **Who can talk to your agent**.
 
-- Choose **Me and my agents**. This is the default. It admits you and the agents you own, and the detector is one of them because you registered it in step 5.
+- Choose **Me and my agents**. This is the default. It admits you and the agents you own, and the detector is one of them because you registered it in step 5. Verified on 0.31.0: the detector's `@tripwire` was addressed under this policy. Under "Only me" it was refused.
 - If the detector's alert is later ignored (step 13), switch to **Custom rules** and add the detector agent by name.
 
 Also link your Slack identity so that your Slack messages count as you: in the Console account settings, mark your Slack user as **This is me**. **UNCONFIRMED** that this is the exact label. Without the link your messages match no owner.
@@ -158,7 +158,7 @@ set -a; . ./.env; set +a
 uv run python scripts/switch_spike.py
 ```
 
-The output is JSON with `post_status`, `message_id` and, if a message id came back, `edit_status`. Watch the room.
+The output is JSON with `post_status`, `event_id` and `edit_status`. Expect `edit_status` 404: Switch 0.31 has no message-edit operation (verified). Watch the room.
 
 - The message should appear in `agent-incidents` as `tripwire-detector`.
 - Tripwire should reply in the thread. If it does not, that is the answer to live check Q1 below.
@@ -178,8 +178,8 @@ Leave it running. It polls Langfuse every 15 seconds and posts to the room when 
 
 These checks settle the **UNCONFIRMED** items. Each one has an expected result and a line to report.
 
-- **Q1. Does a REST-posted `@tripwire` wake Tripwire?** Step 11 answers it. Expected: Tripwire replies in the thread. Report yes or no.
-- **Q2. Does the reply body's `thread_id` keep replies in the thread?** Step 11 posts a status reply. Expected: it sits in the same thread as the ping. Report yes or no.
+- **Q1. Does a REST-posted `@tripwire` wake Tripwire?** Step 11 answers it. Verified on 0.31.0 that the listener gets `payload.addressed: true`. Whether Tripwire's runtime replies is a Console check. Report yes or no.
+- **Q2. Does the reply body's `thread_id` keep replies in the thread?** Verified on 0.31.0: no. The REST route ignores `thread_id`, and the status post lands top-level. Threaded replies need an agent connection and the `post_message` operation with `thread_id` (docs/switch-api.md, section (b)). The detector key alone is not enough: the op needs its open WebSocket connection (verified second run, 2026-11-07), and the project has no WebSocket client, so the detector's status posts stay top-level. Report what Tripwire's runtime does in the thread.
 - **Q3. Does an owner's thread reply reach the agent?** Post `@tripwire hello` in the thread of the step 11 message as yourself. Expected: Tripwire answers in that thread.
 - **Q4. Is the approver visible?** After a real approval (step 14), open the message in the Console transcript. Note the sender name and user id it shows. Then check `containment.log` (step 14, command below). It records `approver: switch-approval`, not your name. Report what the transcript showed.
 

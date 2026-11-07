@@ -151,7 +151,7 @@ class TripwireTools:
         )
 
     def request_containment(self, incident_id: str, action: str) -> str:
-        """Ask for one menu action. The owner's click is the approval; the server sends `source=owner`."""
+        """Ask for one menu action. The owner approves by replying in the thread (`@tripwire approve`); the server sends `source=owner`. PROVISIONAL until H02 confirms approver visibility."""
         if action not in ACTIONS:
             return f"refused: {action!r} is not on the action menu"
         return self._run(

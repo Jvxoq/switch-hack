@@ -89,15 +89,22 @@ docs.slack.dev `chat.postMessage`.
 
 ## Alert path
 
-**(a) PREFERRED: detector posts as its own Switch agent.**
+**(a) PREFERRED: detector posts as its own Switch agent.** Steps 2 to 5 are verified on self-hosted Switch 0.31.0 (see the last section).
 1. Operator registers the detector once: `POST /agents` (registration key), store the returned `api_key`.
-2. Set addressing so the detector and humans can reach Tripwire: `POST /agents/{tripwire_id}/ops/update_agent_detail` with
-   `"addressing": "anyone"` or a rule that admits the detector agent (`agents` dimension) and the room.
+2. Set who may address Tripwire. The owner does this in the Console or the Gateway, not the agent: `PUT /gateway/agents/{tripwire_id}/addressing-policy`
+   with the owner's session cookie. The agent's own key gets 403 on `update_agent_detail`. The default for a new agent is
+   `owner_and_owner_agents`, which admits the detector because the owner registered it.
 3. Add the detector to the room (`!invite-agent @detector`) and give Tripwire an alias (`!set-alias @tripwire @tripwire`).
 4. Post: `POST /agents/{detector_id}/message` with `{room_id, content}` and `Authorization: Bearer <detector api_key>`.
-   The alert text addresses `@tripwire`. The scripted check is `scripts/switch_spike.py` (no flag).
-5. Caveat: the docs do not say how the `addressed` flag is set on a message, so whether `@tripwire` in content triggers Tripwire
-   is **UNCONFIRMED**. H00 must confirm it live.
+   The alert text addresses `@tripwire`, and Switch sets `payload.addressed` to true for that name mention.
+   The answer is `{"ok": true, "event_id": "sw_..."}`. The `event_id` is the message id and the thread root.
+   The REST route ignores `thread_id`, so this post is always top-level.
+5. Threaded replies need a live connection: `POST /agents/{id}/ops/post_message` with header `X-Switch-Connection-Id` and body
+   `{"body": ..., "thread_id": "<event_id>"}`. Verified 2026-11-07 (second run): the detector key works over HTTP, but only
+   while the detector holds an open WebSocket connection that has claimed the room. Without the header the answer is 400
+   "Not connected to a room"; with an unknown id it is 409 "not open". The project has no WebSocket client (`websockets` is
+   not a dependency), so the detector's status posts stay top-level until someone decides on a WebSocket client.
+   Tripwire's own agent can do this, since it runs a connection.
 
 **(b) FALLBACK: Slack bot user.**
 1. Create the Slack app (above) and invite it to the incident channel.
@@ -167,3 +174,87 @@ Each of these is a live check in [switch-setup.md](switch-setup.md), steps 11 an
 7. Console labels for per-tool approval ("Disallowed tools" names and the Permission mode options).
 8. Whether the Console passes its environment to Claude Code, so the tool server sees `LANGFUSE_*` keys.
 9. Whether `Who can talk to your agent: Me and my agents` admits the detector agent registered by the same owner.
+
+## Verified against self-hosted Switch 0.31.0 on 2026-11-07 (H00-sim)
+
+Run by H00-sim on a self-hosted stack: the `standalone-docker-compose.yml` from github.com/sandbox-quantum/switch
+(`deploy/local`), published images `switch-core:0.31.0` and `gateway:0.31.0`, Postgres 16, API on `127.0.0.1:8000`,
+Gateway on `127.0.0.1:3000`, no Mattermost (`collab` profile off). Telemetry off. Owner user created through the Gateway
+API (`POST /gateway/users`), registration key created with `POST /gateway/api-keys`. The Gateway UI itself was not
+driven with Playwright. Listener: a stand-in WebSocket client (not committed). This verifies the **self-hosted** server only.
+Slack, the Console-run Tripwire agent and the Claude Code provider are still the human's live test.
+
+Each fact below was seen on the running server. The source is noted where it matters.
+
+**Self-host facts**
+- The server version reported on the WebSocket is `0.31.0`. `GET /health` returns `{"status":"ok"}`.
+- The Gateway API lives under the `/gateway` prefix on port 8000: `POST /gateway/auth/login`, `POST /gateway/users`,
+  `POST /gateway/api-keys`, `PUT /gateway/agents/{id}/addressing-policy`, `POST /gateway/rooms`. Bare `/auth/login` returns 401.
+- A new deployment seeds the admin from `GATEWAY_ADMIN_EMAIL` and `GATEWAY_ADMIN_PASSWORD` on first start.
+- Registration key creation returns the key once, in the `key` field.
+
+**(a) Addressing: CONFIRMED**
+- Detector `POST /agents/{det}/message` with `@tripwire ...` reaches the listener as a `message` event with
+  `payload.addressed: true`, `sender_name: "tripwire-detector"`, `thread_id: null`.
+- Text with no `@` mention gives `payload.addressed: false`. The listener still receives it, because `filter=all` is the default.
+- Owner-set policies, applied with `PUT /gateway/agents/{id}/addressing-policy` (the owner's session; the agent's own key gets
+  403 on `update_agent_detail`: "An agent can't change its own settings... Your owner changes them"):
+
+  | Tripwire policy | Detector's `@tripwire` |
+  | --- | --- |
+  | `owner_only` (rule `owner: true`, `users: []`, `agents: []`) | `addressed: false`. Switch replies in the thread: "@tripwire-detector You're not permitted..." |
+  | `owner_and_owner_agents` (the new-agent default) | `addressed: true` |
+  | `anyone` (policy `null`) | `addressed: true` |
+
+- The Console option "Me and my agents" is `owner_and_owner_agents`. The detector is admitted under it because it has the same owner.
+- Not checked: whether a human's Slack message counts the same. That needs the live test.
+
+**(b) Threads: CONFIRMED with one correction**
+- REST `POST /agents/{id}/message` accepts `room_id` and `content` (and `metadata`). `thread_id` in the body is ignored. The
+  reply is top-level (`thread_id: null`). The handler is `bridges/agent/api/handlers.py`, and its `SendMessageRequest` has no `thread_id`.
+  Its answer is `{"ok": true, "event_id": "sw_..."}`, with **no** `thread_id` and no `id`. The earlier client code expected one, so it raised.
+- Replies that stay in a thread: `POST /agents/{id}/ops/post_message` with header `X-Switch-Connection-Id` (the agent must
+  hold an open connection in the room) and body `{"body": "...", "thread_id": "<event_id>"}`. The answer is
+  `{"result": {"event_id": "sw_..."}}`. Verified with a second agent: the event carried `thread_id` equal to the root's `event_id`.
+  `read_context` then listed the reply under that root.
+- The thread id is the root's `event_id`, which equals `payload.message_id`. Any message id in the thread normalises to the root.
+- Second run (2026-11-07, detector key, after the stack was rebuilt): `ops/post_message` with `thread_id` returned 200 only
+  while the detector's own WebSocket was open and claimed the room. Without a connection header it returned 400 "Not connected
+  to a room. Call connect_to_room first.", and an unknown connection id returned 409. A reply posted that way appeared in
+  `read_context` under the root. So threading from the detector needs a WebSocket client, not only the key.
+- While Tripwire's stand-in agent had no connection, a detector `@tripwire` got an automatic in-thread reply from Switch:
+  "@tripwire-detector I'm currently offline ... I'll respond once it reconnects." The alert still exists, so a crashed Tripwire
+  is visible in the thread.
+- Without the connection header, the op answers 409 "connection ... is not open". A non-member agent gets a `refused` frame with 403 "Agent is not a member of this room".
+- An unmentioned threaded reply from another agent gave `addressed: false`. Whether an owner's unmentioned reply in the thread
+  counts is **not** tested (needs the Console or Slack).
+
+**(c) Message edit: CONFIRMED absent**
+- `POST /agents/{id}/ops/update_message` returns 404: "unknown operation 'update_message'". The operation list
+  (`GET /agents/{id}/ops`, 53 operations) has no edit, update or delete operation for messages. The message-related
+  operations are `post_message` and `send_targeted_message`, both of which only send.
+- Decision: `SWITCH_STATUS_MODE=reply` stays the default and the only working mode.
+
+**(d) Room discovery: CONFIRMED (it was UNCONFIRMED before)**
+- `POST /agents/{detector_id}/ops/list_rooms` with body `{}` and the detector's key, with no connection header, returns
+  `{"result": [{"room_id": "...", "name": "agent-incidents", "description": "...", "connected": false, "archived": false}]}`.
+  This is the call in `docs/switch-setup.md` step 6. Read `room_id` from the matching `name`, not the top level of the answer.
+- `list_all_rooms` also works with the agent's key. An unknown `X-Switch-Connection-Id` gets 409.
+
+**(e) Scripts: run against this server**
+- `scripts/switch_spike.py` (path a) posts 200 and prints `event_id`. The edit probe gets 404 as expected. The earlier script
+  read `message_id` or `id`, which never came back, so the edit probe never ran. Fixed.
+- `tripwire/switch_client.py`, `post_alert` before the fix: `SwitchError: Switch accepted the alert but returned no thread id`.
+  After the fix it returns the `event_id`. `reply` now posts top-level and no longer sends `thread_id`.
+- `scripts/register_detector.py` works. Registration returns 200 with `{id, api_key}`. A repeat name gets 409 and
+  "Re-run with --overwrite". `--overwrite` keeps the same id, gives a new key, and the old key then gets 401.
+  `connection_model: session_passive` is accepted.
+- The `live` tests in `tests/integration/test_switch_client_live.py` pass against this server (2 of 2).
+
+**Other facts seen**
+- The WebSocket sends `connection_state` first, then `ping` every 2 s. A `pong` with `cursor` is answered without problems.
+  The `connection_state` event carries `rooms` and `position`.
+- The operation catalog for an agent (`GET /agents/{id}/ops`) has 53 entries. The agent-protocol page lists fewer, so read the live catalog at startup.
+
+**H00-sim result line (not the live H00; H00 stays open for the human)**
+`H00-sim self-hosted 0.31.0 2026-11-07: path a post yes (event_id returned, not message_id); addressed by @name yes; owner_only refuses detector yes; threads need the connection op post_message with thread_id; edit no (404); room discovery list_rooms {} yes. Slack path not run.`

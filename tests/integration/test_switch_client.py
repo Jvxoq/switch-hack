@@ -48,7 +48,7 @@ class Recorder:
         self.requests.append(request)
         if self._responses:
             return self._responses.pop(0)
-        return httpx.Response(200, json={"id": "msg_default", "thread_id": "thr_default"})
+        return httpx.Response(200, json={"ok": True, "event_id": "sw_default"})
 
     def body(self, index: int = -1) -> dict:
         return json.loads(self.requests[index].content)
@@ -80,12 +80,12 @@ def test_T7_alert_text_has_every_field_and_addresses_tripwire():
 
 
 def test_T7_agent_post_alert_sends_every_field_with_bearer_auth():
-    recorder = Recorder([httpx.Response(200, json={"id": "msg_1", "thread_id": "thr_1"})])
+    recorder = Recorder([httpx.Response(200, json={"ok": True, "event_id": "sw_1"})])
     poster = _agent(recorder)
 
     thread_ref = poster.post_alert(_incident(), format_alert_text(_incident(), TRACE_LINK))
 
-    assert thread_ref == "thr_1"
+    assert thread_ref == "sw_1"
     request = recorder.requests[0]
     assert request.method == "POST"
     assert str(request.url) == f"{BASE}/agents/{AGENT_ID}/message"
@@ -103,20 +103,27 @@ def test_T7_agent_post_alert_adds_missing_address():
     assert recorder.body()["content"].endswith("@tripwire")
 
 
-def test_T7_agent_thread_ref_falls_back_to_message_id():
-    recorder = Recorder([httpx.Response(200, json={"message": {"id": "msg_9"}})])
-    assert _agent(recorder).post_alert(_incident(), "x") == "msg_9"
+def test_T7_agent_thread_ref_is_the_event_id_switch_returns():
+    """Switch 0.31 answers {"ok": true, "event_id": ...}. The event id is the thread root for replies."""
+    recorder = Recorder([httpx.Response(200, json={"ok": True, "event_id": "sw_9"})])
+    assert _agent(recorder).post_alert(_incident(), "x") == "sw_9"
+
+
+def test_T7_agent_post_alert_without_event_id_raises():
+    recorder = Recorder([httpx.Response(200, json={"ok": True})])
+    with pytest.raises(SwitchError, match="event_id"):
+        _agent(recorder).post_alert(_incident(), "x")
 
 
 def test_T7_agent_set_status_reply_mode_posts_status_in_thread():
     recorder = Recorder()
     poster = _agent(recorder, status_mode="reply")
 
-    poster.set_status("thr_1", "investigating")
+    poster.set_status("sw_1", "investigating")
 
     body = recorder.body()
-    assert body["thread_id"] == "thr_1"
-    assert body["content"] == "Status: investigating"
+    assert "thread_id" not in body, "the REST route ignores thread_id, so it must not be sent"
+    assert body == {"room_id": ROOM_ID, "content": "Status: investigating"}
     assert str(recorder.requests[0].url) == f"{BASE}/agents/{AGENT_ID}/message"
 
 
@@ -132,16 +139,16 @@ def test_T7_agent_set_status_edit_mode_calls_update_message():
     assert body["content"] == "INC-7 · now contained @tripwire"
 
 
-def test_T7_agent_reply_posts_text_into_thread():
+def test_T7_agent_reply_posts_top_level_because_rest_cannot_thread():
     recorder = Recorder()
-    _agent(recorder).reply("thr_1", "Fix PR opened")
-    assert recorder.body() == {"room_id": ROOM_ID, "thread_id": "thr_1", "content": "Fix PR opened"}
+    _agent(recorder).reply("sw_1", "Fix PR opened")
+    assert recorder.body() == {"room_id": ROOM_ID, "content": "Fix PR opened"}
 
 
 def test_T7_agent_http_error_raises_switch_error():
     recorder = Recorder([httpx.Response(401, text="bad key")])
     with pytest.raises(SwitchError, match="HTTP 401"):
-        _agent(recorder).reply("thr_1", "hi")
+        _agent(recorder).reply("sw_1", "hi")
 
 
 def test_T7_dry_run_logs_and_never_calls_network(caplog):
@@ -253,10 +260,10 @@ def test_default_status_posts_reply_not_edit() -> None:
     recorder = Recorder()
     poster = _agent(recorder)
 
-    poster.set_status("thr_1", "awaiting_approval")
+    poster.set_status("sw_1", "awaiting_approval")
 
     assert [str(request.url) for request in recorder.requests] == [f"{BASE}/agents/{AGENT_ID}/message"]
-    assert recorder.body() == {"room_id": ROOM_ID, "thread_id": "thr_1", "content": "Status: awaiting_approval"}
+    assert recorder.body() == {"room_id": ROOM_ID, "content": "Status: awaiting_approval"}
 
 
 def test_every_switch_request_carries_timeout() -> None:
@@ -265,7 +272,7 @@ def test_every_switch_request_carries_timeout() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         timeouts.append(request.extensions["timeout"]["read"])
-        return httpx.Response(200, json={"thread_id": "th-1"})
+        return httpx.Response(200, json={"ok": True, "event_id": "sw_t"})
 
     client = SwitchClient(BASE, AGENT_ID, KEY, ROOM_ID, transport=httpx.MockTransport(handler))
     client.post_alert(_incident(), "alert")

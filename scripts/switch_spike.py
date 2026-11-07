@@ -6,8 +6,10 @@ Path (a) (preferred): the detector posts as its own Switch agent via
 Path (b) (--fallback): post as a Slack bot user via chat.postMessage.
 
 All secrets come from env vars. Nothing is hard-coded.
-Edit support is UNCONFIRMED for Switch (docs list no message-edit op); the
-edit attempt records the HTTP status and never fails the run.
+Edit support: Switch 0.31 has no message-edit operation (verified 2026-11-07: ops/update_message
+answers 404). The edit attempt still runs and records the HTTP status; it never fails the run.
+The REST post answers {"ok": true, "event_id": ...}; event_id is the message id used for the edit probe.
+The REST route ignores thread_id, so the ping is a top-level message.
 
 Usage:
   python scripts/switch_spike.py --dry-run
@@ -62,12 +64,11 @@ def path_a(dry_run: bool) -> dict:
     result = {"path": "a", "post_status": status, "post_body": body[:500]}
     if status // 100 == 2:
         try:
-            message_id = json.loads(body).get("message_id") or json.loads(body).get("id")
+            message_id = json.loads(body).get("event_id")
         except (ValueError, AttributeError):
             message_id = None
-        result["message_id"] = message_id
-        # UNCONFIRMED edit endpoint: Switch docs list no message-edit operation.
-        # Recorded for H00 only; a 404/405 here means "no edit support".
+        result["event_id"] = message_id
+        # Switch 0.31 has no message-edit operation: expect 404 here (verified 2026-11-07).
         if message_id:
             edit_url = f"{base}/agents/{agent_id}/ops/update_message"
             e_status, e_body = _call("POST", edit_url, auth,
@@ -95,7 +96,7 @@ def path_b(dry_run: bool) -> dict:
     except ValueError:
         parsed = {}
     if parsed.get("ok") and parsed.get("ts"):
-        # UNCONFIRMED: chat.update was not confirmed from docs; attempt once.
+        # chat.update was not confirmed from docs; attempt once.
         e_status, e_body = _call("POST", "https://slack.com/api/chat.update", auth,
                                  {"channel": channel, "ts": parsed["ts"],
                                   "text": PING_TEXT + " (edited)"})
