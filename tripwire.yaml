@@ -3,6 +3,7 @@ poll_seconds: 15
 window_minutes: 60            # rolling trace window
 containment_url: http://127.0.0.1:8700
 langfuse_host: http://localhost:3000   # the LANGFUSE_HOST env var overrides this
+langfuse_max_pages: 100               # pages read per Langfuse list endpoint each poll (100 rows a page); raise it for a busier window
 records_path: incident-records.md      # JSONL incident record log; the detector's --records flag overrides this
 
 rules:

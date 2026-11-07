@@ -7,6 +7,7 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 
 from tests.fakes.clock import DEFAULT_START, FakeClock
@@ -20,10 +21,12 @@ from tripwire.contracts.models import Incident, RuleHit, Trace
 from tripwire.detector.main import (
     Detector,
     default_rules,
+    make_reader,
     resolve_langfuse_host,
     resolve_records_path,
     run,
 )
+from tripwire.langfuse_client import LangfuseError
 
 ROUTE = "order-lookup"
 SEARCH = ("tool", {"q": "Order 42"}, "ok", "DEFAULT", 0.01, "search_orders")
@@ -80,8 +83,6 @@ def file_writer(path: Path):
 def record_ids_in(path: Path) -> list[str]:
     """Incident ids in the record log, one per line, in file order."""
     return [json.loads(line)["id"] for line in path.read_text(encoding="utf-8").splitlines()]
-
-
 
 
 def loop_incident(containment: FakeContainment) -> Incident:
@@ -460,3 +461,120 @@ def test_config_refuses_empty_langfuse_host() -> None:
 
 def test_config_file_sets_records_path_and_host(cfg: TripwireConfig) -> None:
     assert (cfg.langfuse_host, cfg.records_path) == ("http://localhost:3000", "incident-records.md")
+
+
+class FlakyContainment(FakeContainment):
+    """Fails reopen for one route and open for another. Every other call is the real fake."""
+
+    def __init__(self, clock, cfg, *, reopen_fails_on: str | None = None, open_fails_on: str | None = None):
+        super().__init__(clock, cfg)
+        self._reopen_fails_on = reopen_fails_on
+        self._open_fails_on = open_fails_on
+
+    def reopen(self, incident_id: str) -> Incident:
+        if self.get(incident_id).route == self._reopen_fails_on:
+            raise RuntimeError(f"containment broke reopening {incident_id}")
+        return super().reopen(incident_id)
+
+    def open_incident(self, rule: str, route: str, opened_at) -> Incident:
+        if route == self._open_fails_on:
+            raise RuntimeError(f"containment broke opening on route {route}")
+        return super().open_incident(rule, route, opened_at)
+
+
+def test_failing_observe_does_not_stop_next_incident(
+    cfg: TripwireConfig, clock: FakeClock, caplog
+) -> None:
+    """Two verifying incidents get new hits in one poll. The first one's reopen fails, the second still reopens."""
+    containment = FlakyContainment(clock, cfg, reopen_fails_on=ROUTE)
+    detector, langfuse, containment, _ = build(cfg, clock, containment=containment)
+    other = "other-route"
+    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    detector.poll()
+    first = loop_incident(containment)
+    agent_asks_owner(containment, first.id)
+    containment.apply(first.id, "cap_max_steps", "owner", "jason", 0.0)
+    detector.poll()
+    assert containment.get(first.id).state == "verifying"
+
+    langfuse.put(make_trace(trace_id="loop-2", route=other, calls=[SEARCH] * 5, running=True, start=clock.now()))
+    detector.poll()
+    [second] = [i for i in containment.list(open_only=False) if i.route == other]
+    agent_asks_owner(containment, second.id)
+    containment.apply(second.id, "cap_max_steps", "owner", "jason", 0.0)
+    detector.poll()
+    assert containment.get(second.id).state == "verifying"
+
+    langfuse.put(make_trace(trace_id="loop-3", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    langfuse.put(make_trace(trace_id="loop-4", route=other, calls=[SEARCH] * 5, running=True, start=clock.now()))
+    with caplog.at_level(logging.ERROR):
+        events = detector.poll()
+
+    assert f"observe failed for {first.id}" in events
+    assert containment.get(second.id).state == "awaiting_approval"
+    assert containment.get(second.id).ask_round == 2
+    assert "observe failed for " + first.id in caplog.text
+
+
+def test_failing_ingest_does_not_stop_next_incident(
+    cfg: TripwireConfig, clock: FakeClock, caplog
+) -> None:
+    """The broken route's trace comes first in the window. Its open fails, and the healthy route still opens."""
+    containment = FlakyContainment(clock, cfg, open_fails_on="broken-route")
+    detector, langfuse, containment, _ = build(cfg, clock, containment=containment)
+    langfuse.put(make_trace(trace_id="broken-1", route="broken-route", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()))
+
+    with caplog.at_level(logging.ERROR):
+        events = detector.poll()
+
+    assert "ingest failed for loop on broken-route" in events
+    assert loop_incident(containment).route == ROUTE
+    assert "ingest failed for loop on broken-route" in caplog.text
+
+
+def test_failing_ingest_leaves_verify_running(
+    cfg: TripwireConfig, clock: FakeClock
+) -> None:
+    """A failing ingest does not stop verify: the contained incident still advances to verifying."""
+    containment = FlakyContainment(clock, cfg, open_fails_on="broken-route")
+    detector, langfuse, containment, _ = build(cfg, clock, containment=containment)
+    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    detector.poll()
+    inc = loop_incident(containment)
+    agent_asks_owner(containment, inc.id)
+    containment.apply(inc.id, "cap_max_steps", "owner", "jason", 0.0)
+    langfuse.put(make_trace(trace_id="broken-1", route="broken-route", calls=[SEARCH] * 5, running=True, start=clock.now()))
+    langfuse.put(make_trace(trace_id="loop-1", calls=[SEARCH] * 5, running=False, start=DEFAULT_START))
+
+    events = detector.poll()
+
+    assert "ingest failed for loop on broken-route" in events
+    assert containment.get(inc.id).state == "verifying"
+
+
+def test_default_page_cap_comes_from_config(cfg: TripwireConfig) -> None:
+    assert cfg.langfuse_max_pages == 100
+
+
+def test_page_cap_must_be_positive() -> None:
+    with pytest.raises(ConfigError, match="langfuse_max_pages"):
+        load_config_dict({"langfuse_max_pages": 0})
+
+
+def test_configured_page_cap_reaches_langfuse_client() -> None:
+    """The reader the detector builds reads at most `langfuse_max_pages` pages, then fails loudly."""
+    cfg = load_config_dict({"langfuse_max_pages": 2})
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.params["page"])
+        return httpx.Response(200, json={"data": [], "meta": {"totalPages": 1000}})
+
+    reader = make_reader(
+        cfg, "https://langfuse.test", "pk", "sk", transport=httpx.MockTransport(handler)
+    )
+    with pytest.raises(LangfuseError, match="more than 2 pages"):
+        reader.recent_traces(DEFAULT_START)
+
+    assert requested == ["1", "2"]
