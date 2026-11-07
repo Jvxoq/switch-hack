@@ -188,7 +188,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | --- | --- | --- | --- | --- | --- | --- |
 | C01 | Scaffold, contracts, fakes | – | M | – | done | Scaffold, contracts, config loader, ports and in-memory fakes pushed; suite green. |
 | C02 | Switch API research → `docs/switch-api.md` | – | S | – | done | Switch API facts doc (unknowns marked UNCONFIRMED) + scripts/switch_spike.py; no live calls. |
-| H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | blocked | H — waiting on human: run scripts/switch_spike.py per H00 checklist. |
+| H00 | Switch spike: install, room, one post from a script (human) | C02 | S | – | blocked | H — skipped by human for now (no public Switch gateway); W01/A01 built provisionally. |
 | R01 | Loop rule | C01 | S | T1, T2 | done | Loop rule (T1,T2); allow-list via constructor since RulesConfig lacks it — E04 must wire. |
 | R02 | Silent-error rule | C01 | S | T3 | done | Silent-error rule: 3 non-ERROR matches in 5 min per route (report lost in restart; T3 green). |
 | R03 | Cost-spike rule | C01 | S | T4 | done | Cost-spike rule vs per-route hourly median baseline (report lost in restart; T4 green). |
@@ -206,9 +206,9 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | A01 | Tripwire agent package (template, instructions, tool server) | C01, C02, S01 | L | T16 (server half) | done | Tool server w/ server-side call+time budget (T16), room template, instructions; MCP stdio via python -m tripwire_agent.server (A01b); T16 lock-sensitive. PROVISIONAL (H00). |
 | A02 | Fix-PR tool | A01 | S | T15 | done | Fix-PR tool: branch, commit, open PR, store pr_url; never approves/merges (T15). Registered in tool server via C-FIX3. |
 | A03 | Agent evals + eval runner | A01 | M | T13, T16, T19 | done | Eval harness, recorded incidents, offline tests (T13,T16,T19 offline parts); 5 paid evals skip without key — X01 runs them. |
-| K01 | Docker Compose + self-hosted Langfuse | E04, S01, D01 | M | – | done | Compose stack, Dockerfile, Langfuse bootstrap, .env.example; compose config valid; 'up' not exercised (no docker daemon here). |
-| H01 | Switch room setup: template, allowed senders (human) | A01, H00 | S | – | todo | H |
-| H02 | Live Switch tests + E2E script | K01, H01, A02 | M | T14, T20 | todo | H |
+| K01 | Docker Compose + self-hosted Langfuse | E04, S01, D01 | M | – | done | Compose stack, Dockerfile, Langfuse bootstrap, .env.example. Live check: v4 drops /api/public/traces → K01c pins Langfuse v3. |
+| H01 | Switch room setup: template, allowed senders (human) | A01, H00 | S | – | blocked | H — waits on H00 (skipped by human for now). |
+| H02 | Live Switch tests + E2E script | K01, H01, A02 | M | T14, T20 | blocked | H — waits on H01/H00 (skipped by human for now). |
 | X01 | Verification, paid eval run, README | H02, A03, I01 | M | all | todo | key gate |
 
 **Waves:** `C01, C02` → `H00, R*, S01, L01, D01, P01, E00, E03` → `W01, E01, E02, I01, A01` → `E04, A02, A03, H01` → `K01` → `H02` → `X01`.
