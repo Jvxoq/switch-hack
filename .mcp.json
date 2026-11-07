@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "tripwire": {
+      "command": "uv",
+      "args": ["run", "--quiet", "python", "-m", "tripwire_agent.server"],
+      "env": {
+        "TRIPWIRE_CONFIG": "${TRIPWIRE_CONFIG:-tripwire.yaml}",
+        "LANGFUSE_HOST": "${LANGFUSE_HOST:-http://localhost:3000}"
+      }
+    }
+  }
+}

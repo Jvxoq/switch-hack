@@ -113,3 +113,57 @@ docs.slack.dev `chat.postMessage`.
 
 `scripts/switch_spike.py`. Env vars only: `SWITCH_BASE_URL`, `SWITCH_AGENT_ID`, `SWITCH_AGENT_KEY`, `SWITCH_ROOM_ID`
 (path a); `SLACK_BOT_TOKEN`, `SLACK_CHANNEL` (`--fallback`). `--dry-run` prints the request without sending. H00 runs it live.
+
+## Research update, 2026-11-07 (H-PREP)
+
+Re-read against docs.switchagents.ai and the TEMPLATES.md on GitHub. Items marked **confirmed** were seen on a fetched page.
+Items marked **research note** came from the task brief and were not re-read by H-PREP.
+
+### Corrections to the sections above
+
+- **Template version key (confirmed, TEMPLATES.md):** the key is `version`, an integer. `template_version` is not read.
+  `tripwire_agent/room_template.yaml` now uses `version: 1`. Its earlier `template_version: 2` was a silent no-op.
+- **Template addressing values (confirmed):** `owner`, `owner-agents`, `anyone`. The template keeps `owner-agents`.
+- **Agent ops addressing values (confirmed, agent-protocol.md):** `update_agent_detail` takes `owner_only`,
+  `owner_and_owner_agents` or `anyone`. The `owner-agents` spelling above is for the template, not the op.
+  Call it as `POST /agents/{id}/ops/update_agent_detail` with the agent's own key.
+- **Registration `connector_type` (confirmed):** free-form. Switch does not validate it. H-PREP sends `tripwire-detector-py`.
+- **Connection model for the detector (research note, agent-protocol.md):** `session_passive` fits a process that only posts
+  and never listens. The docs do not name an option for this case. `scripts/register_detector.py` uses `session_passive`.
+- **No MCP key in templates or agent settings (confirmed):** agent-settings.md mentions MCP only in the docs-search header.
+  Tripwire's tools come from `.mcp.json` in the agent's Directory, which Claude Code reads. This is standard Claude Code
+  behaviour (research note), not a Switch feature.
+- **Console advanced fields (confirmed, agent-settings.md):** Model (alias such as `sonnet`, or a full id), Effort, Tools,
+  Disallowed tools, Permission mode (no option values listed), Max turns, Isolation, Persistent memory, Color, Always run in
+  background. No option values are documented for Effort, Permission mode or Max turns.
+- **Who can talk to your agent (confirmed, agent-settings.md):** the options are "Me and my agents" (default), "Only me",
+  "Anyone", "Custom rules".
+- **Directory (confirmed):** fixed at creation for agents the Console runs. Set it to the clone path when you create the agent.
+
+### Research notes (not re-read by H-PREP)
+
+- **Approvals are conversational.** No approve or deny buttons are documented anywhere. The incident-response page relies on
+  instructions for human sign-off. H-PREP's approval rule is a thread reply: `@tripwire approve` or `@tripwire decline`.
+  `instructions.md` and the room template carry it.
+- **Approver identity is still unknown.** `user_id` and `user_name` appear on `command` events, but no page says they name an
+  approver. The tool server sends the fixed value `switch-approval`, and the containment service skips its owners check for
+  that value (see `tripwire_agent/server.py`). So nothing server-side checks who replied. The only gate is Switch's
+  addressing policy plus the agent's instruction to act on owner replies only. **PROVISIONAL.**
+- **Message edit is not documented.** H-PREP makes replies the default. `SWITCH_STATUS_MODE=edit` stays opt-in.
+- **Room id lookup:** the `list_rooms` op exists (agent-protocol.md), but its arguments are not documented. The setup
+  guide calls it with an empty body. **UNCONFIRMED.**
+
+### Still unconfirmed
+
+Each of these is a live check in [switch-setup.md](switch-setup.md), steps 11 and 13 to 14.
+
+1. Whether a REST-posted `@tripwire` in content sets the `addressed` flag and wakes Tripwire (Q1).
+2. Whether `thread_id` in the body of `POST /agents/{id}/message` keeps the reply in the thread, and the shape of the
+   response that carries the thread id (Q2).
+3. Whether an owner's thread reply reaches the agent's session, and how threads map to sessions (Q3).
+4. Who the approver is in the transcript, and whether `user_id` or `user_name` can identify them (Q4).
+5. The `list_rooms` arguments and the room id.
+6. Whether `POST .../ops/update_message` exists (the spike's edit probe). Expected: a 404 or 405 when it does not.
+7. Console labels for per-tool approval ("Disallowed tools" names and the Permission mode options).
+8. Whether the Console passes its environment to Claude Code, so the tool server sees `LANGFUSE_*` keys.
+9. Whether `Who can talk to your agent: Me and my agents` admits the detector agent registered by the same owner.
