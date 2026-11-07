@@ -1,6 +1,6 @@
 """HTTP `ContainmentClient`: one method per route of the containment service (section 3 of tasks.md).
 
-Refusals (401/404/409/422 with a `reason`) raise `ContainmentRefused(reason)`. Any other error status
+Refusals (404/409/422 with a `reason`) raise `ContainmentRefused(reason)`. Any other error status
 or a network failure propagates as the httpx exception.
 """
 

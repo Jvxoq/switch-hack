@@ -1,12 +1,14 @@
 """Silent-error rule (R02).
 
 An observation is a silent error when its output matches any configured pattern (case-insensitive substring)
-while its level is not ERROR. The rule fires once per route when `count` silent errors fall inside a sliding
-window of `window_minutes` that ends at `now`. The window is measured on observation start times and spans all
-traces passed in, so a burst split across several traces still fires.
+while its level is not ERROR. A route fires when `count` silent errors fall inside a sliding window of
+`window_minutes` that ends at `now`. The window is measured on observation start times and spans all traces
+passed in, so a burst split across several traces still fires.
 
-The hit cites every silent-error observation in the window, `trace_id` is the trace of the newest one, and
-`cost_usd` is the summed cost of the cited observations.
+Once a route reaches the threshold, the rule emits one hit per trace that has silent errors in the window.
+Each hit cites only that trace's silent-error observations, and `cost_usd` is their summed cost. Cost is
+counted once per trace, so the incident manager (which dedupes cost by trace id) never adds the same window
+cost twice as the window moves. `detail` carries the route-level count for the whole window.
 """
 
 from __future__ import annotations
@@ -64,23 +66,36 @@ class SilentErrorRule:
             matches = sorted(by_route[route].values(), key=lambda pair: (pair[0].start_time, pair[0].id))
             if len(matches) < settings.count:
                 continue
-            newest_obs, newest_trace = matches[-1]
-            cited = [obs for obs, _ in matches]
-            hits.append(
-                RuleHit(
-                    rule="silent_error",
-                    route=route,
-                    trace_id=newest_trace.id,
-                    observation_ids=[obs.id for obs in cited],
-                    cost_usd=round(sum(obs.cost_usd for obs in cited), 6),
-                    at=now,
-                    detail=(
-                        f"{len(cited)} silent errors on route {route} in the last "
-                        f"{settings.window_minutes:g} minutes (threshold {settings.count})"
-                    ),
-                )
+            detail = (
+                f"{len(matches)} silent errors on route {route} in the last "
+                f"{settings.window_minutes:g} minutes (threshold {settings.count})"
             )
+            route_hits = [
+                _trace_hit(route, trace_observations, now, detail)
+                for trace_observations in _group_by_trace(matches)
+            ]
+            hits.extend(route_hits)
         return hits
 
 
-rule = SilentErrorRule()
+def _group_by_trace(matches: list[tuple[Observation, Trace]]) -> list[list[tuple[Observation, Trace]]]:
+    """Split one route's matches by trace. Each group keeps start-time order and groups are ordered by newest."""
+    groups: dict[str, list[tuple[Observation, Trace]]] = {}
+    for pair in matches:
+        groups.setdefault(pair[1].id, []).append(pair)
+    # `matches` is already sorted oldest first, so the last entry in each group is that trace's newest.
+    return sorted(groups.values(), key=lambda group: (group[-1][0].start_time, group[-1][0].id))
+
+
+def _trace_hit(route: str, group: list[tuple[Observation, Trace]], now: datetime, detail: str) -> RuleHit:
+    trace = group[-1][1]
+    observations = [obs for obs, _ in group]
+    return RuleHit(
+        rule="silent_error",
+        route=route,
+        trace_id=trace.id,
+        observation_ids=[obs.id for obs in observations],
+        cost_usd=round(sum(obs.cost_usd for obs in observations), 6),
+        at=now,
+        detail=detail,
+    )

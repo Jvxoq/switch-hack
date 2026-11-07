@@ -181,7 +181,7 @@ services:
       langfuse-web:
         condition: service_healthy
     command: ["python", "-m", "tripwire.detector", "--config", "/app/tripwire.yaml",
-              "--records", "/state/incident-records.md"]
+              "--records", "/state/incident-records.jsonl"]
     environment:
       LANGFUSE_HOST: http://langfuse-web:3000
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?run scripts/bootstrap_langfuse.sh first}
@@ -197,7 +197,7 @@ services:
       - tripwire_state:/state
 
   # One-shot demo agent: runs the order-lookup agent with one bug switched on, then exits.
-  # Traces go to Langfuse. Online runs need a real ANTHROPIC_API_KEY and ANTHROPIC_MODEL in .env.
+  # Traces go to Langfuse. Online runs need a real TOGETHER_API_KEY and TOGETHER_MODEL in .env.
   demo-agent:
     build: .
     image: tripwire:local
@@ -213,8 +213,10 @@ services:
       LANGFUSE_HOST: http://langfuse-web:3000
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?run scripts/bootstrap_langfuse.sh first}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?run scripts/bootstrap_langfuse.sh first}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      TOGETHER_MODEL: ${TOGETHER_MODEL:-}
+      DEMO_PRICE_INPUT_PER_MTOK: ${DEMO_PRICE_INPUT_PER_MTOK:-}
+      DEMO_PRICE_OUTPUT_PER_MTOK: ${DEMO_PRICE_OUTPUT_PER_MTOK:-}
 
 volumes:
   tripwire_state:

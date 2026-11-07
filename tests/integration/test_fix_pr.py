@@ -6,7 +6,6 @@ The GitHub side is an httpx.MockTransport, so no test reaches the network.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import logging
 import os
@@ -24,7 +23,6 @@ from tripwire_agent.tools.open_fix_pr import (
     GIT_TIMEOUT_SECONDS,
     HTTP_TIMEOUT_SECONDS,
     MAX_PATCH_CHARS,
-    FixPrError,
     FixPrTool,
     GitHubPulls,
     GitRepo,
@@ -168,34 +166,6 @@ def test_T15_token_stays_out_of_results(
     assert SECRET not in result
     assert SECRET not in caplog.text
     assert SECRET not in repr(containment.get(incident_id))
-
-
-def test_T15_token_comes_from_env(
-    containment: FakeContainment,
-    clock: FakeClock,
-    repos: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The production constructor reads GITHUB_TOKEN and sends it as the bearer token."""
-    _, workdir = repos
-    monkeypatch.setenv("GITHUB_TOKEN", SECRET)
-    github = FakeGitHub()
-    pulls = dataclasses.replace(GitHubPulls.from_env("acme", "app"), transport=github.transport())
-    incident_id = _open_incident(containment, clock)
-
-    FixPrTool(containment=containment, git=GitRepo(workdir), pulls=pulls).open_fix_pr(
-        incident_id, "Stop repeated list calls", PATCH
-    )
-
-    assert github.requests[0][3] == f"Bearer {SECRET}"
-
-
-def test_T15_missing_token_fails_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A missing token stops the tool at construction, not on the first incident."""
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-
-    with pytest.raises(FixPrError, match="GITHUB_TOKEN is not set"):
-        GitHubPulls.from_env("acme", "app")
 
 
 def test_T15_github_call_has_timeout(

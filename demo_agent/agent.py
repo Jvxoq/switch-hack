@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from demo_agent.llm import ModelClient
+from demo_agent.llm import ModelCallError, ModelClient
 from demo_agent.recording import ROUTE, TraceRecorder
 from demo_agent.tools import TOOL_SPECS, execute_tool
 from tripwire.contracts.models import Trace
@@ -118,7 +118,7 @@ def run_order_lookup(
             response = model.create(
                 model=model_id, system=system, messages=messages, tools=TOOL_SPECS, max_tokens=max_tokens,
             )
-        except httpx.HTTPError as exc:
+        except ModelCallError as exc:
             status = "error"
             error = f"{type(exc).__name__}: {exc}"
             recorder.generation(

@@ -4,7 +4,7 @@ window_minutes: 60            # rolling trace window
 containment_url: http://127.0.0.1:8700
 langfuse_host: http://localhost:3000   # the LANGFUSE_HOST env var overrides this
 langfuse_max_pages: 100               # pages read per Langfuse list endpoint each poll (100 rows a page); raise it for a busier window
-records_path: incident-records.md      # JSONL incident record log; the detector's --records flag overrides this
+records_path: incident-records.jsonl   # JSONL incident record log; the detector's --records flag overrides this
 
 rules:
   loop:
@@ -36,16 +36,14 @@ tripwire_guard:
   max_minutes: 3
 
 fix_pr:
-  repo_path: ""           # local clone of the app repo the fix PRs branch from; empty turns the fix-PR tool off
-  github_owner: ""        # GitHub owner of that repo, for example the org or user name
-  github_repo: ""         # GitHub repo name, without the owner
+  repo_path: "/Users/jvxoq/Documents/Projects/switch-hack/switch-hack"           # local clone of the app repo the fix PRs branch from; empty turns the fix-PR tool off
+  github_owner: "Jvxoq"        # GitHub owner of that repo, for example the org or user name
+  github_repo: "switch-hack"         # GitHub repo name, without the owner
   base_branch: main       # branch the fix PRs are based on and target
 
-owners: [jason]
-room: agent-incidents
+owners: [jason, winjasdan2]
 
 secrets:
   langfuse_public_key: LANGFUSE_PUBLIC_KEY
   langfuse_secret_key: LANGFUSE_SECRET_KEY
-  switch_token: SWITCH_TOKEN
   github_token: GITHUB_TOKEN

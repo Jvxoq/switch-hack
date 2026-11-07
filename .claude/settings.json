@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__tripwire__open_fix_pr",
+      "mcp__tripwire__request_containment",
+      "mcp__tripwire__revert_containment"
+    ]
+  }
+}

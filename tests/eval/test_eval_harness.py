@@ -34,7 +34,7 @@ from tests.eval.scoring import (
     diagnosis_problems,
     extract_diagnosis,
 )
-from tripwire.contracts.config import load_config
+from tripwire.contracts.config import TripwireConfig, load_config
 from tripwire.rules.cost_spike import CostSpikeRule
 from tripwire.rules.loop import LoopRule
 from tripwire.rules.silent_error import SilentErrorRule
@@ -84,7 +84,8 @@ def test_fixtures_trigger_their_rule(stem: str) -> None:
     """Each recorded incident makes the real rule fire on its trigger trace, so the fixture is a true incident."""
     fixture = load_fixture(stem)
     rule_cfg = load_config(REPO_ROOT / "tripwire.yaml").rules
-    rule = RULE_CLASSES.get(fixture.rule, LoopRule)()
+    rule_cls = RULE_CLASSES.get(fixture.rule, LoopRule)
+    rule = LoopRule(TripwireConfig().allow_list_tools) if rule_cls is LoopRule else rule_cls()
 
     hits = rule.evaluate(list(fixture.traces), rule_cfg, fixture.opened_at)
 

@@ -7,7 +7,7 @@ Provisional, from docs/switch-api.md (Q&A 3 to 5):
 - Switch does not say whether an approver's name is readable from an approval record. Until it does, the approver
   is the fixed value `APPROVAL_APPROVER`, and the containment service skips its owners check for that value.
 
-The approver is never a tool argument: the model fills tool arguments before a human clicks Allow.
+The approver is never a tool argument: the model fills tool arguments, so a name there would be the model's claim, not the owner's.
 Transport: `python -m tripwire_agent.server` serves the tools over MCP stdio (`mcp` SDK, `MCPServer`).
 The budget guard runs here, in the server, so the model cannot skip it. The config comes from
 `TRIPWIRE_CONFIG` (default `tripwire.yaml`); Langfuse keys come from the env vars the config names.
@@ -21,19 +21,28 @@ import os
 import sys
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, asdict
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
 from mcp.server.mcpserver import MCPServer
 
+from tripwire.clock import SystemClock
 from tripwire.containment.client import ContainmentHTTPClient
-from tripwire.contracts.config import ConfigError, TripwireConfig, load_config, resolve_secret
+from tripwire.contracts.config import (
+    ConfigError,
+    TripwireConfig,
+    load_config,
+    resolve_langfuse_host,
+    resolve_secret,
+)
 from tripwire.contracts.models import ACTIONS, Incident, Trace, incident_to_dict
 from tripwire.contracts.ports import Clock, ContainmentRefused
 from tripwire.langfuse_client import LangfuseClient
+from tripwire_agent.text import cap_text
+from tripwire_agent.tools.open_fix_pr import FixPrTool, GitHubPulls, GitRepo
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +53,6 @@ BUDGET_SPENT = "BUDGET SPENT: post partial findings and stop"
 MAX_CALLS_PER_ROUND = 20
 MAX_ROUND_DURATION = timedelta(minutes=3)
 MAX_TRACKED_INCIDENTS = 256
-MAX_TOOL_TEXT_CHARS = 20_000
-CUT_MARK = "...[truncated]"
 
 
 class AgentContainment(Protocol):
@@ -82,16 +89,11 @@ class FixPr(Protocol):
 @dataclass
 class _Budget:
     ask_round: int
+    rejections: int = 0
+    contained: bool = False
     calls: int = 0
     started_at: datetime | None = None
     spent: bool = False
-
-
-def cap_text(text: str, limit: int = MAX_TOOL_TEXT_CHARS) -> str:
-    """Return at most `limit` characters, the cut mark included."""
-    if len(text) <= limit:
-        return text
-    return text[: limit - len(CUT_MARK)] + CUT_MARK
 
 
 class TripwireTools:
@@ -105,12 +107,16 @@ class TripwireTools:
         *,
         approver: str = APPROVAL_APPROVER,
         fix_pr: FixPr | None = None,
+        max_calls: int = MAX_CALLS_PER_ROUND,
+        max_duration: timedelta = MAX_ROUND_DURATION,
     ) -> None:
         self._containment = containment
         self._traces = traces
         self._clock = clock
         self._approver = approver
         self._fix_pr = fix_pr
+        self._max_calls = max_calls
+        self._max_duration = max_duration
         self._lock = threading.Lock()
         self._budgets: OrderedDict[str, _Budget] = OrderedDict()
 
@@ -168,11 +174,15 @@ class TripwireTools:
         )
 
     def revert_containment(self, incident_id: str) -> str:
-        """Revert the active action. Call only after an owner wrote `revert INC-<n>`."""
-        return self._run(
-            incident_id,
-            lambda _incident: json.dumps(self._containment.revert(incident_id, self._approver)),
-        )
+        """Revert the active action. Call only after an owner wrote `revert INC-<n>`.
+
+        Not under the budget: it is one call an owner ordered, often long after containment. Under the budget,
+        the time the owner spent merging and deploying the fix used up the 3 minutes and the revert was refused.
+        """
+        try:
+            return json.dumps(self._containment.revert(incident_id, self._approver))
+        except ContainmentRefused as exc:
+            return exc.reason
 
     def open_fix_pr(self, incident_id: str, title: str, patch: str) -> str:
         """Open the incident's fix PR. Runs under the same budget as the other tools; it never asks for approval."""
@@ -193,7 +203,7 @@ class TripwireTools:
             return exc.reason
 
         with self._lock:
-            budget = self._budget_for(incident_id, incident.ask_round)
+            budget = self._budget_for(incident_id, incident.ask_round, incident.rejections, incident.action is not None)
             # The count is read, the clock is called, then the count is written. The lock keeps that
             # read-modify-write whole: without it, threads that interleave here all see the same count.
             calls = budget.calls + 1
@@ -201,7 +211,7 @@ class TripwireTools:
             budget.calls = calls
             if budget.started_at is None:
                 budget.started_at = now
-            over = calls > MAX_CALLS_PER_ROUND or now - budget.started_at >= MAX_ROUND_DURATION
+            over = calls > self._max_calls or now - budget.started_at >= self._max_duration
             if over and budget.spent:
                 return BUDGET_SPENT
             if over:
@@ -216,11 +226,18 @@ class TripwireTools:
         except ContainmentRefused as exc:
             return exc.reason
 
-    def _budget_for(self, incident_id: str, ask_round: int) -> _Budget:
-        """Caller holds the lock. A new ask round starts a fresh budget."""
+    def _budget_for(self, incident_id: str, ask_round: int, rejections: int, contained: bool) -> _Budget:
+        """Caller holds the lock. A new ask round, a new decline or containment starts a fresh budget.
+
+        Containment starts the fix-PR stage, which waits for its own owner approval, so it gets its own budget.
+
+        A decline keeps the ask round, so without the rejections key the 3-minute clock kept running
+        while Tripwire waited for the owner's reason, and the revision found the budget already spent.
+        """
         budget = self._budgets.get(incident_id)
-        if budget is None or budget.ask_round != ask_round:
-            budget = _Budget(ask_round=ask_round)
+        key = (ask_round, rejections, contained)
+        if budget is None or (budget.ask_round, budget.rejections, budget.contained) != key:
+            budget = _Budget(ask_round=ask_round, rejections=rejections, contained=contained)
             self._budgets[incident_id] = budget
         self._budgets.move_to_end(incident_id)
         while len(self._budgets) > MAX_TRACKED_INCIDENTS:
@@ -248,13 +265,6 @@ def register(server: Any, tools: TripwireTools) -> None:
         server.tool()(tool)
 
 
-class SystemClock:
-    """Wall clock in UTC. The guard's 3-minute limit reads it."""
-
-    def now(self) -> datetime:
-        return datetime.now(UTC)
-
-
 def build_server(tools: TripwireTools) -> MCPServer:
     """An MCP server exposing exactly the seven tools. Tests connect to it in-process."""
     server = MCPServer("tripwire")
@@ -264,9 +274,6 @@ def build_server(tools: TripwireTools) -> MCPServer:
 
 def build_fix_pr(cfg: TripwireConfig, environ: dict[str, str], containment: AgentContainment) -> FixPr | None:
     """The fix-PR tool, or None when its repo settings or its token are missing. A missing piece is logged, not raised."""
-    # Imported here: tripwire_agent/tools/open_fix_pr.py imports this module for cap_text.
-    from tripwire_agent.tools.open_fix_pr import FixPrTool, GitHubPulls, GitRepo
-
     settings = cfg.fix_pr
     missing = [
         f"fix_pr.{name}"
@@ -304,12 +311,9 @@ def build_tools(
         traces,
         SystemClock(),
         fix_pr=build_fix_pr(cfg, environ, containment),
+        max_calls=cfg.tripwire_guard.max_tool_calls,
+        max_duration=timedelta(minutes=cfg.tripwire_guard.max_minutes),
     )
-
-
-def langfuse_host(cfg: TripwireConfig, environ: Mapping[str, str]) -> str:
-    """The LANGFUSE_HOST env var wins, otherwise the config's `langfuse_host`, the same rule as the detector."""
-    return environ.get("LANGFUSE_HOST") or cfg.langfuse_host
 
 
 def main() -> None:
@@ -318,7 +322,7 @@ def main() -> None:
     cfg = load_config(os.environ.get("TRIPWIRE_CONFIG", DEFAULT_CONFIG_PATH))
     containment = ContainmentHTTPClient(cfg.containment_url)
     traces = LangfuseClient(
-        langfuse_host(cfg, os.environ),
+        resolve_langfuse_host(cfg, os.environ),
         resolve_secret(cfg, "langfuse_public_key"),
         resolve_secret(cfg, "langfuse_secret_key"),
     )

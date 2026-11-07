@@ -21,7 +21,7 @@ import httpx
 
 from tripwire.contracts.models import Incident
 from tripwire.contracts.ports import ContainmentRefused
-from tripwire_agent.server import cap_text
+from tripwire_agent.text import cap_text
 
 logger = logging.getLogger(__name__)
 
@@ -63,13 +63,6 @@ class GitHubPulls:
     owner: str
     repo: str
     transport: httpx.BaseTransport | None = field(default=None, repr=False)
-
-    @classmethod
-    def from_env(cls, owner: str, repo: str) -> GitHubPulls:
-        token = os.environ.get("GITHUB_TOKEN", "")
-        if not token:
-            raise FixPrError("GITHUB_TOKEN is not set")
-        return cls(token=token, owner=owner, repo=repo)
 
     def open_pull(self, *, title: str, head: str, base: str, body: str) -> str:
         headers = {

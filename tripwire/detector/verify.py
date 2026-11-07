@@ -14,11 +14,8 @@ from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
 
 from tripwire.contracts.config import TripwireConfig
-from tripwire.contracts.models import Incident, RuleHit
+from tripwire.contracts.models import NON_DISABLING_ACTIONS, Incident, RuleHit
 from tripwire.contracts.ports import Clock, ContainmentClient, ContainmentRefused, SwitchPoster
-
-# Actions that leave the route running, so a quiet period proves something.
-NON_DISABLING_ACTIONS = ("cap_max_steps", "fallback_model")
 
 # Renders the record for an incident, appends it to the record log, and returns the text to post.
 WriteRecord = Callable[[Incident], str]

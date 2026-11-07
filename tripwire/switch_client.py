@@ -40,15 +40,6 @@ class SwitchError(RuntimeError):
     """Switch (or Slack) refused or failed a call, or the client is misconfigured."""
 
 
-def format_alert_text(incident: Incident, trace_link: str | None = None) -> str:
-    """The alert line: `INC-<n> · <rule> · route <route> · <hits> hits · $<cost> · <trace link> · @tripwire`."""
-    link = trace_link or "no trace link"
-    return (
-        f"{incident.id} · {incident.rule} · route {incident.route} · {incident.hit_count} hits · "
-        f"${incident.cost_usd:.2f} · {link} · {ADDRESS}"
-    )
-
-
 def _ensure_address(text: str) -> str:
     return text if ADDRESS in text else f"{text} {ADDRESS}"
 
@@ -117,7 +108,7 @@ class SwitchClient(_Base):
 
     # SwitchPoster port -------------------------------------------------
 
-    def post_alert(self, incident: Incident, text: str) -> str:
+    def post_alert(self, incident: Incident, text: str) -> str | None:
         content = _ensure_address(text)
         if self.dry_run:
             self._dry("post alert", content)
@@ -126,7 +117,10 @@ class SwitchClient(_Base):
         message = data.get("message") if isinstance(data.get("message"), dict) else {}
         thread_ref = data.get("thread_id") or message.get("thread_id") or data.get("id") or message.get("id")
         if not thread_ref:
-            raise SwitchError("Switch accepted the alert but returned no thread id")
+            # The local Switch server answers {"ok": true, "event_id": ...} with no message or thread id.
+            # The alert is posted, so return None: raising here made the detector post it again every poll.
+            log.warning("Switch posted the alert for %s but returned no thread id", incident.id)
+            return None
         return str(thread_ref)
 
     def set_status(self, thread_ref: str, text: str) -> None:
@@ -192,7 +186,7 @@ class SlackFallbackClient(_Base):
 
     # SwitchPoster port -------------------------------------------------
 
-    def post_alert(self, incident: Incident, text: str) -> str:
+    def post_alert(self, incident: Incident, text: str) -> str | None:
         content = _ensure_address(text)
         if self.dry_run:
             self._dry("post alert", content)

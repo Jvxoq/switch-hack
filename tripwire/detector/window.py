@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+import logging
+from datetime import datetime, timedelta
 
 from tripwire.contracts.models import Trace
 from tripwire.contracts.ports import Clock, LangfuseReader
+from tripwire.langfuse_client import LangfuseError
+
+log = logging.getLogger(__name__)
 
 # Overlap between polls so a trace that started just before the last poll is not missed.
 POLL_OVERLAP = timedelta(seconds=30)
@@ -17,6 +21,7 @@ class TraceWindow:
     - New traces come from `reader.recent_traces(last_poll - 30 s)`.
     - Cached running traces are re-fetched with `reader.get_trace(id)`, so a trace that was running at the
       last poll is judged with its latest observations.
+      A running trace that Langfuse returns 404 for is dropped; other get_trace errors keep the cached copy.
     - Finished traces are never re-fetched.
     - Traces that started more than `minutes` ago are dropped.
     """
@@ -25,7 +30,7 @@ class TraceWindow:
         self._reader = reader
         self._clock = clock
         self._window = timedelta(minutes=minutes)
-        self._last_poll = None
+        self._last_poll: datetime | None = None
         self._traces: dict[str, Trace] = {}
 
     def refresh(self) -> list[Trace]:
@@ -37,7 +42,18 @@ class TraceWindow:
 
         for trace_id, cached in list(self._traces.items()):
             if cached.end_time is None:
-                self._traces[trace_id] = self._reader.get_trace(trace_id)
+                try:
+                    self._traces[trace_id] = self._reader.get_trace(trace_id)
+                except LangfuseError as exc:
+                    if exc.status_code == 404:
+                        del self._traces[trace_id]
+                        log.warning("trace %s is gone from Langfuse; dropped from the window", trace_id)
+                    else:
+                        log.warning(
+                            "could not refresh running trace %s; keeping the cached copy",
+                            trace_id,
+                            exc_info=True,
+                        )
 
         for trace in fresh:
             self._traces[trace.id] = trace

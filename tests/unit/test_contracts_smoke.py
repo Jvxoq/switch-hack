@@ -37,8 +37,7 @@ def test_config_defaults_match_section_3(cfg):
     assert cfg.auto_pause.minutes == 10 and cfg.auto_pause.budget_fraction == 0.5
     assert cfg.verify_minutes == 5
     assert cfg.tripwire_guard.max_tool_calls == 20 and cfg.tripwire_guard.max_minutes == 3
-    assert cfg.owners == ["jason"]
-    assert cfg.room == "agent-incidents"
+    assert cfg.owners == ["jason", "winjasdan2"]
     assert cfg.window_minutes == 60
     assert cfg.containment_url == "http://127.0.0.1:8700"
 
@@ -53,9 +52,9 @@ def test_config_error_is_readable():
 
 
 def test_resolve_secret_reads_env_var_by_name(cfg):
-    assert resolve_secret(cfg, "switch_token", {"SWITCH_TOKEN": "abc"}) == "abc"
-    with pytest.raises(ConfigError, match="SWITCH_TOKEN"):
-        resolve_secret(cfg, "switch_token", {})
+    assert resolve_secret(cfg, "github_token", {"GITHUB_TOKEN": "abc"}) == "abc"
+    with pytest.raises(ConfigError, match="GITHUB_TOKEN"):
+        resolve_secret(cfg, "github_token", {})
 
 
 # ---- models ------------------------------------------------------------------
@@ -164,7 +163,7 @@ def test_fake_containment_revert_restores_flags(containment: FakeContainment, cl
     containment.update(inc.id, state="investigating")
     containment.update(inc.id, state="awaiting_approval")
     containment.apply(inc.id, "fallback_model", "owner", "switch-approval", 0)
-    assert containment.flags()["routes"]["order-lookup"]["model"] == "fallback-model"
+    assert containment.flags()["routes"]["order-lookup"]["model"] == "zai-org/GLM-5.3"
     flags = containment.revert(inc.id, "jason")
     assert flags["routes"]["order-lookup"]["model"] is None
     got = containment.get(inc.id)

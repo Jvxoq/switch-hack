@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from tests.fakes.clock import DEFAULT_START, FakeClock
 from tests.fakes.langfuse import FakeLangfuse
 from tests.fakes.traces import make_trace
 from tripwire.detector.window import TraceWindow
+from tripwire.langfuse_client import LangfuseError
 
 CALL = ("span", {"q": 1}, {"ok": True}, "DEFAULT", 0.01, "lookup")
 
@@ -25,6 +27,20 @@ class SpyLangfuse(FakeLangfuse):
     def get_trace(self, trace_id):
         self.get_calls.append(trace_id)
         return super().get_trace(trace_id)
+
+
+class FailingLangfuse(SpyLangfuse):
+    """SpyLangfuse that raises `errors[trace_id]` on every get_trace for that id."""
+
+    def __init__(self, traces=(), errors=None) -> None:
+        super().__init__(traces)
+        self.errors: dict[str, Exception] = errors or {}
+
+    def get_trace(self, trace_id):
+        self.get_calls.append(trace_id)
+        if trace_id in self.errors:
+            raise self.errors[trace_id]
+        return FakeLangfuse.get_trace(self, trace_id)
 
 
 def test_running_trace_picks_up_new_observations_on_next_refresh():
@@ -153,3 +169,55 @@ def test_custom_window_length_is_respected():
 
     clock.advance(minutes=11)
     assert window.refresh() == []
+
+
+def test_deleted_running_trace_is_dropped(caplog):
+    clock = FakeClock()
+    reader = FailingLangfuse()
+    reader.put(make_trace(calls=[CALL], running=True, start=clock.now() - timedelta(seconds=60), trace_id="gone"))
+    window = TraceWindow(reader, clock)
+    window.refresh()
+
+    # The old trace starts before the poll overlap, so recent_traces skips it and only get_trace can reach it.
+    clock.advance(seconds=60)
+    reader.errors["gone"] = LangfuseError("trace not found", status_code=404)
+    reader.put(make_trace(calls=[CALL], running=False, start=clock.now(), trace_id="new"))
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.detector.window"):
+        traces = window.refresh()
+
+    assert [t.id for t in traces] == ["new"]
+    records = [r for r in caplog.records if r.name == "tripwire.detector.window"]
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (logging.WARNING, "trace gone is gone from Langfuse; dropped from the window"),
+    ]
+
+    clock.advance(seconds=15)
+    assert [t.id for t in window.refresh()] == ["new"]
+    assert reader.get_calls.count("gone") == 1
+
+
+def test_refresh_error_keeps_cached_trace(caplog):
+    clock = FakeClock()
+    reader = FailingLangfuse()
+    reader.put(make_trace(calls=[CALL], running=True, start=clock.now() - timedelta(seconds=60), trace_id="live"))
+    window = TraceWindow(reader, clock)
+    window.refresh()
+
+    # The old trace starts before the poll overlap, so recent_traces skips it and only get_trace can reach it.
+    clock.advance(seconds=60)
+    reader.errors["live"] = LangfuseError("langfuse unavailable", status_code=503)
+    reader.put(make_trace(calls=[CALL], running=False, start=clock.now(), trace_id="new"))
+
+    with caplog.at_level(logging.WARNING, logger="tripwire.detector.window"):
+        traces = window.refresh()
+
+    assert [t.id for t in traces] == ["live", "new"]
+    records = [r for r in caplog.records if r.name == "tripwire.detector.window"]
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (logging.WARNING, "could not refresh running trace live; keeping the cached copy"),
+    ]
+
+    clock.advance(seconds=15)
+    window.refresh()
+    assert reader.get_calls == ["live", "live"]

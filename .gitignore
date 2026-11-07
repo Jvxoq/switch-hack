@@ -3,3 +3,5 @@
 .pytest_cache/
 .venv/
 __pycache__/
+incident-records.md
+incident-records.jsonl

@@ -21,7 +21,7 @@ from demo_agent.agent import (
     RouteFlags,
     run_order_lookup,
 )
-from demo_agent.llm import AnthropicModel, Prices, ScriptedModel
+from demo_agent.llm import Prices, ScriptedModel, TogetherModel
 from demo_agent.recording import LangfuseSink, TraceRecorder
 from demo_agent.tools import execute_tool
 from tripwire.contracts.config import TripwireConfig
@@ -103,7 +103,7 @@ def test_loop_bug_repeats_identical_get_order(cfg: TripwireConfig) -> None:
 def test_loop_rule_fires_on_loop_bug(cfg: TripwireConfig) -> None:
     _, trace = run_offline("loop")
 
-    hits = LoopRule().evaluate([trace], cfg.rules, end_of(trace))
+    hits = LoopRule(TripwireConfig().allow_list_tools).evaluate([trace], cfg.rules, end_of(trace))
 
     assert [hit.rule for hit in hits] == ["loop"]
     assert "near-identical repeated calls" in hits[0].detail
@@ -112,7 +112,7 @@ def test_loop_rule_fires_on_loop_bug(cfg: TripwireConfig) -> None:
 def test_loop_rule_quiet_on_healthy_run(cfg: TripwireConfig) -> None:
     result, trace = run_offline("none")
 
-    hits = LoopRule().evaluate([trace], cfg.rules, end_of(trace))
+    hits = LoopRule(TripwireConfig().allow_list_tools).evaluate([trace], cfg.rules, end_of(trace))
 
     assert hits == []
     assert result.answer == "Your order A-1001 has shipped."
@@ -134,8 +134,9 @@ def test_silent_error_rule_fires_over_ten_runs(cfg: TripwireConfig) -> None:
 
     hits = SilentErrorRule().evaluate(traces, cfg.rules, now)
 
-    assert [hit.route for hit in hits] == ["order-lookup"]
-    assert len(hits[0].observation_ids) == 10
+    assert [hit.route for hit in hits] == ["order-lookup"] * 10
+    assert [hit.trace_id for hit in hits] == [trace.id for trace in traces]
+    assert [len(hit.observation_ids) for hit in hits] == [1] * 10
 
 
 def test_silent_error_rule_quiet_on_healthy_search(cfg: TripwireConfig) -> None:
@@ -221,35 +222,96 @@ def test_unreachable_containment_runs_with_no_flags() -> None:
     assert (flags, result.status) == (RouteFlags(), "completed")
 
 
-def test_anthropic_request_carries_padded_cost_spike_body() -> None:
+def _together_reply(message: dict[str, Any], finish_reason: str = "stop") -> httpx.Response:
+    return httpx.Response(200, json={
+        "id": "c1", "object": "chat.completion", "created": 1, "model": "m",
+        "choices": [{"index": 0, "finish_reason": finish_reason, "message": {"role": "assistant", **message}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    })
+
+
+def _tool_call(arguments: str) -> dict[str, Any]:
+    return {"id": "call_1", "type": "function", "index": 0,
+            "function": {"name": "get_order", "arguments": arguments}}
+
+
+def test_together_request_carries_padded_cost_spike_body() -> None:
     sent: list[httpx.Request] = []
 
     def reply(request: httpx.Request) -> httpx.Response:
         sent.append(request)
-        body = {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn",
-                "usage": {"input_tokens": 10, "output_tokens": 5}}
-        return httpx.Response(200, json=body)
+        return _together_reply({"content": "done"})
 
     with httpx.Client(transport=httpx.MockTransport(reply)) as http:
-        model = AnthropicModel("test-key", http=http)
+        model = TogetherModel("test-key", http=http)
         result, trace = run_offline("cost_spike", model=model)
 
     body = json.loads(sent[0].content)
-    assert sent[0].headers["x-api-key"] == "test-key"
+    assert sent[0].headers["authorization"] == "Bearer test-key"
     assert (body["model"], body["max_tokens"]) == ("scripted", 32_000)
-    assert len(body["system"]) >= len(COST_SPIKE_PAD)
+    assert body["messages"][0]["role"] == "system"
+    assert len(body["messages"][0]["content"]) >= len(COST_SPIKE_PAD)
+    assert body["tools"][0]["function"]["name"] == "get_order"
+    assert "input_schema" not in body["tools"][0]["function"]
     assert "test-key" not in json.dumps(trace.observations, default=str)
     assert result.status == "completed"
 
 
-def test_anthropic_http_error_becomes_error_run() -> None:
+def test_together_tool_call_round_trip_keeps_call_id_and_records_usage() -> None:
+    sent: list[dict[str, Any]] = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        if len(sent) == 1:
+            return _together_reply({"content": None, "tool_calls": [_tool_call('{"order_id": "A-1001"}')]},
+                                   "tool_calls")
+        return _together_reply({"content": "Order A-1001 has shipped."})
+
+    with httpx.Client(transport=httpx.MockTransport(reply)) as http:
+        result, trace = run_offline("none", model=TogetherModel("test-key", http=http))
+
+    assistant, tool = sent[1]["messages"][-2:]
+    assert assistant["tool_calls"][0]["id"] == "call_1"
+    assert json.loads(assistant["tool_calls"][0]["function"]["arguments"]) == {"order_id": "A-1001"}
+    assert (tool["role"], tool["tool_call_id"]) == ("tool", "call_1")
+    assert (result.status, result.answer) == ("completed", "Order A-1001 has shipped.")
+    assert [obs.name for obs in trace.observations].count("get_order") == 1
+    assert trace.observations[0].cost_usd == Prices().cost({"input_tokens": 10, "output_tokens": 5})
+
+
+def test_together_loop_bug_repeats_identical_tool_input() -> None:
+    """The loop rule matches exact repeats, so parsed Together arguments must stay identical across calls."""
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        return _together_reply({"content": None, "tool_calls": [_tool_call('{"order_id": "A-1001"}')]}, "tool_calls")
+
+    with httpx.Client(transport=httpx.MockTransport(reply)) as http:
+        result, trace = run_offline("loop", model=TogetherModel("test-key", http=http))
+
+    calls = [obs for obs in trace.observations if obs.name == "get_order"]
+    assert result.status == "step cap reached"
+    assert len(calls) == 12
+    assert len({json.dumps(obs.input, sort_keys=True) for obs in calls}) == 1
+
+
+def test_together_bad_tool_arguments_become_error_run() -> None:
+    def reply(request: httpx.Request) -> httpx.Response:
+        return _together_reply({"content": None, "tool_calls": [_tool_call("{not json")]}, "tool_calls")
+
+    with httpx.Client(transport=httpx.MockTransport(reply)) as http:
+        result, trace = run_offline("none", model=TogetherModel("test-key", http=http))
+
+    assert (result.status, trace.observations[-1].level) == ("error", "ERROR")
+
+
+def test_together_http_error_becomes_error_run() -> None:
     def fail(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "upstream down"})
+        return httpx.Response(401, json={"error": {"message": "bad key"}})
     recorder = TraceRecorder(prices=Prices())
 
     with httpx.Client(transport=httpx.MockTransport(fail)) as http:
         result = run_order_lookup(
-            QUESTION, bug="none", model=AnthropicModel("test-key", http=http), model_name="m",
+            QUESTION, bug="none", model=TogetherModel("test-key", http=http), model_name="m",
             flags=StaticFlags(), recorder=recorder,
         )
 
@@ -287,6 +349,26 @@ def test_cli_rejects_zero_runs_before_any_network() -> None:
 
 def test_cli_online_run_needs_api_key() -> None:
     assert cli.main(["run", "--bug", "none", "--n", "1"], env={}) == 2
+
+
+def test_cli_online_run_needs_prices(capsys: pytest.CaptureFixture[str]) -> None:
+    env = {"TOGETHER_API_KEY": "test-key", "TOGETHER_MODEL": "test/model"}
+    assert cli.main(["run", "--bug", "none", "--n", "1"], env=env) == 2
+    assert (
+        "online runs need DEMO_PRICE_INPUT_PER_MTOK and DEMO_PRICE_OUTPUT_PER_MTOK "
+        "set to the Together model's USD per million tokens"
+    ) in capsys.readouterr().err
+
+
+def test_cli_rejects_bad_price(capsys: pytest.CaptureFixture[str]) -> None:
+    env = {
+        "TOGETHER_API_KEY": "test-key",
+        "TOGETHER_MODEL": "test/model",
+        "DEMO_PRICE_INPUT_PER_MTOK": "abc",
+        "DEMO_PRICE_OUTPUT_PER_MTOK": "15",
+    }
+    assert cli.main(["run", "--bug", "none", "--n", "1"], env=env) == 2
+    assert "DEMO_PRICE_INPUT_PER_MTOK must be a number" in capsys.readouterr().err
 
 
 def test_prices_cost_uses_per_million_rates() -> None:

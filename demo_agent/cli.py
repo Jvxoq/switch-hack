@@ -12,7 +12,7 @@ from typing import Sequence
 import httpx
 
 from demo_agent.agent import BUGS, QUESTIONS, ContainmentFlags, run_order_lookup
-from demo_agent.llm import AnthropicModel, ScriptedModel, prices_from_env
+from demo_agent.llm import ScriptedModel, TogetherModel, prices_from_env
 from demo_agent.recording import LangfuseSink, TraceRecorder
 
 DEFAULT_CONTAINMENT_URL = "http://127.0.0.1:8700"
@@ -50,14 +50,26 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
     api_key = None
     model_name = None
     if not args.offline:
-        api_key = env.get("ANTHROPIC_API_KEY")
-        model_name = env.get("ANTHROPIC_MODEL")
+        api_key = env.get("TOGETHER_API_KEY")
+        model_name = env.get("TOGETHER_MODEL")
         if not api_key or not model_name:
-            print("online runs need ANTHROPIC_API_KEY and ANTHROPIC_MODEL (or pass --offline)", file=sys.stderr)
+            print("online runs need TOGETHER_API_KEY and TOGETHER_MODEL (or pass --offline)", file=sys.stderr)
+            return 2
+        if not env.get("DEMO_PRICE_INPUT_PER_MTOK") or not env.get("DEMO_PRICE_OUTPUT_PER_MTOK"):
+            print(
+                "online runs need DEMO_PRICE_INPUT_PER_MTOK and DEMO_PRICE_OUTPUT_PER_MTOK "
+                "set to the Together model's USD per million tokens",
+                file=sys.stderr,
+            )
             return 2
 
+    try:
+        prices = prices_from_env(env)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    prices = prices_from_env(env)
     failures = 0
     with httpx.Client() as http:
         flags = ContainmentFlags(env.get("TRIPWIRE_CONTAINMENT_URL", DEFAULT_CONTAINMENT_URL), http=http)
@@ -69,7 +81,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
                 name = "scripted"
             else:
                 assert api_key is not None and model_name is not None
-                model = AnthropicModel(api_key, http=http)
+                model = TogetherModel(api_key, http=http)
                 name = model_name
             question = QUESTIONS[index % len(QUESTIONS)]
             result = run_order_lookup(

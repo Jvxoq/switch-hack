@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +73,6 @@ class SecretNames(_Strict):
 
     langfuse_public_key: str = "LANGFUSE_PUBLIC_KEY"
     langfuse_secret_key: str = "LANGFUSE_SECRET_KEY"
-    switch_token: str = "SWITCH_TOKEN"
     github_token: str = "GITHUB_TOKEN"
 
 
@@ -85,7 +85,7 @@ class TripwireConfig(_Strict):
     # Pages read per Langfuse list endpoint (100 rows a page) on each poll. A busier window needs a higher cap.
     langfuse_max_pages: int = Field(100, ge=1)
     # Incident record log (JSONL). The detector's --records flag overrides it.
-    records_path: str = Field("incident-records.md", min_length=1)
+    records_path: str = Field("incident-records.jsonl", min_length=1)
     verify_minutes: float = Field(5, gt=0)
     rules: RulesConfig = Field(default_factory=RulesConfig)
     allow_list_tools: list[str] = Field(default_factory=lambda: ["list_orders_page"])
@@ -94,7 +94,6 @@ class TripwireConfig(_Strict):
     tripwire_guard: TripwireGuardConfig = Field(default_factory=TripwireGuardConfig)
     fix_pr: FixPrConfig = Field(default_factory=FixPrConfig)
     owners: list[str] = Field(default_factory=lambda: ["jason"], min_length=1)
-    room: str = "agent-incidents"
     secrets: SecretNames = Field(default_factory=SecretNames)
 
 
@@ -136,3 +135,11 @@ def resolve_secret(cfg: TripwireConfig, secret: str, environ: dict[str, str] | N
     if not value:
         raise ConfigError(f"secret {secret!r} needs the environment variable {env_name} to be set")
     return value
+
+
+LANGFUSE_HOST_ENV = "LANGFUSE_HOST"
+
+
+def resolve_langfuse_host(cfg: TripwireConfig, environ: Mapping[str, str]) -> str:
+    """The LANGFUSE_HOST env var wins; otherwise the config's `langfuse_host`."""
+    return environ.get(LANGFUSE_HOST_ENV) or cfg.langfuse_host

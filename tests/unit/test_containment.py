@@ -176,7 +176,7 @@ def test_T12_revert_restores_previous_flags(containment: ContainmentClient, cloc
     containment.reopen(inc.id)
     containment.apply(inc.id, "fallback_model", "owner", "jason", 0.0)
     # Replace, don't stack: the step cap is gone, only the model is set.
-    assert containment.flags()["routes"][ROUTE] == {"disabled": False, "max_steps": None, "model": "fallback-model"}
+    assert containment.flags()["routes"][ROUTE] == {"disabled": False, "max_steps": None, "model": "zai-org/GLM-5.3"}
     flags = containment.revert(inc.id, "jason")
     assert flags == before
     assert containment.get(inc.id).action is None

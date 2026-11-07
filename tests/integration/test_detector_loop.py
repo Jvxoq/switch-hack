@@ -22,7 +22,6 @@ from tripwire.detector.main import (
     Detector,
     default_rules,
     make_reader,
-    resolve_langfuse_host,
     resolve_records_path,
     run,
 )
@@ -440,17 +439,8 @@ def test_loop_allow_list_comes_from_config(clock: FakeClock) -> None:
     assert len(loop_hits(free_cfg)) == 1
 
 
-def test_langfuse_host_comes_from_config_without_env(cfg: TripwireConfig) -> None:
-    assert resolve_langfuse_host(cfg, {}) == "http://localhost:3000"
-    assert resolve_langfuse_host(cfg, {"LANGFUSE_HOST": ""}) == "http://localhost:3000"
-
-
-def test_langfuse_host_env_overrides_config(cfg: TripwireConfig) -> None:
-    assert resolve_langfuse_host(cfg, {"LANGFUSE_HOST": "http://langfuse:3000"}) == "http://langfuse:3000"
-
-
 def test_records_flag_overrides_config_path(cfg: TripwireConfig) -> None:
-    assert resolve_records_path(None, cfg) == "incident-records.md"
+    assert resolve_records_path(None, cfg) == "incident-records.jsonl"
     assert resolve_records_path("/var/log/records.jsonl", cfg) == "/var/log/records.jsonl"
 
 
@@ -460,7 +450,7 @@ def test_config_refuses_empty_langfuse_host() -> None:
 
 
 def test_config_file_sets_records_path_and_host(cfg: TripwireConfig) -> None:
-    assert (cfg.langfuse_host, cfg.records_path) == ("http://localhost:3000", "incident-records.md")
+    assert (cfg.langfuse_host, cfg.records_path) == ("http://localhost:3000", "incident-records.jsonl")
 
 
 class FlakyContainment(FakeContainment):

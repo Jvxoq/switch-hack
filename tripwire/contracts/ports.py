@@ -41,8 +41,8 @@ class LangfuseReader(Protocol):
 
 @runtime_checkable
 class SwitchPoster(Protocol):
-    def post_alert(self, incident: Incident, text: str) -> str:
-        """Post the alert and return the thread_ref."""
+    def post_alert(self, incident: Incident, text: str) -> str | None:
+        """Post the alert and return the thread_ref, or None when Switch gives no thread id back."""
         ...
 
     def set_status(self, thread_ref: str, text: str) -> None:

@@ -2,12 +2,7 @@
 
 Tripwire: a Switch room agent that watches Langfuse traces for runaway AI-agent behavior and contains it after an owner approves in Slack. Built for the WeMakeDevs "Flip the Switch" hackathon.
 
-- [Product proposal](tripwire-product-proposal.md): problem, design, flow charts, decisions, test plan.
-- Flow charts: [`images/`](images/)
-- Status and what was verified: [docs/verification.md](docs/verification.md)
-- **Set up in Switch:** [docs/switch-setup.md](docs/switch-setup.md) is the click-by-click guide for your own Switch Console and Slack on a laptop.
-
-![Tripwire overview](images/01-overview.png)
+Read the [product proposal](tripwire-product-proposal.md) for the design and a flow chart per feature.
 
 ## What Tripwire does
 
@@ -34,37 +29,35 @@ When a rule fires, Tripwire opens an incident and posts an alert in the Switch r
 
 Incident state lives only in the containment service. The detector and the tool server read and change it through HTTP.
 
+## Prerequisites
+
+- **Switch Console** desktop app running on this machine (its local server), with **Slack** connected.
+- **Claude Code** installed and signed in (Pro or Max). Tripwire runs on it inside Switch.
+- **Docker** with Compose, **uv**, Python 3.12, git and openssl.
+- **Keys:** a Together AI key (the demo agent's model), a GitHub token with repo access (fix PRs), and a Switch agent registration key.
+- **In the Console, once:**
+  1. Create a room and link it to a Slack channel.
+  2. Add an agent named `tripwire`. Provider: Claude Code. Directory: this repo. Instructions: paste `tripwire_agent/instructions.md`.
+  3. Under "Who can talk to your agent", pick Custom rules: you, plus the agent `tripwire-detector`.
+- **In `tripwire.yaml`:** put your Switch user name in `owners`, and your repo in `fix_pr`.
+
 ## Quickstart
 
-Needs Python 3.11+, [uv](https://docs.astral.sh/uv/), Docker with Compose, and `openssl`.
-
 ```bash
-uv sync
-uv run pytest -q
-cp .env.example .env
-scripts/bootstrap_langfuse.sh   # fills the CHANGEME secrets and Langfuse keys in .env
-docker compose up -d            # Langfuse, containment, detector
-docker compose run --rm demo-agent   # one run of the demo agent (set DEMO_BUG in .env)
+git clone https://github.com/Jvxoq/switch-hack && cd switch-hack && uv sync
+cp .env.example .env && scripts/bootstrap_langfuse.sh   # then set TOGETHER_API_KEY, GITHUB_TOKEN, SWITCH_BASE_URL, SWITCH_ROOM_ID, SWITCH_DRY_RUN=0
+docker compose up -d && docker compose stop detector    # Langfuse + containment; the detector runs on the host to reach Switch
+SWITCH_REGISTRATION_KEY=<key> uv run --env-file .env python scripts/register_detector.py   # then in the room: !invite-agent @tripwire-detector and !invite-agent @tripwire
+uv run --env-file .env python -m tripwire.detector --config tripwire.yaml
 ```
 
-Open Langfuse at http://127.0.0.1:3000 and the containment service at http://127.0.0.1:8700/flags. Both are bound to 127.0.0.1.
-
-Run the pieces outside Compose:
+Then start an incident from a second terminal:
 
 ```bash
-# containment service (single worker: its write lock is per process)
-TRIPWIRE_CONFIG=tripwire.yaml TRIPWIRE_STATE_DIR=./containment-state \
-  uv run uvicorn --factory tripwire.containment.app:create_default_app --host 127.0.0.1 --port 8700 --workers 1
-
-# detector
-uv run python -m tripwire.detector --config tripwire.yaml
-
-# demo agent, scripted model, no key and no Langfuse needed
-uv run python -m demo_agent run --bug loop --n 1 --offline
-
-# tool server for the Tripwire agent (MCP over stdio; register it in the agent's Claude Code config)
-LANGFUSE_HOST=http://localhost:3000 TRIPWIRE_CONFIG=tripwire.yaml uv run python -m tripwire_agent.server
+docker compose run --rm -e DEMO_BUG=loop demo-agent
 ```
+
+An alert lands in the room within about 15 seconds, and Tripwire takes it from there. Langfuse is at http://127.0.0.1:3000.
 
 ## Tests
 
@@ -82,10 +75,10 @@ These run real model calls and cost money. They are not run in CI.
 
 ```bash
 export ANTHROPIC_API_KEY=...
-scripts/run_evals.sh --runs 5    # writes docs/eval-results.md: case, runs, passes, cost
+scripts/run_evals.sh --runs 5    # prints case, runs, passes and cost
 ```
 
-Pass counts are pending. See [docs/verification.md](docs/verification.md#pending-how-to-finish).
+Pass counts are pending.
 
 ## Configuration
 
@@ -97,7 +90,7 @@ Pass counts are pending. See [docs/verification.md](docs/verification.md#pending
 | `window_minutes` | 60 | Rolling trace window every rule judges |
 | `containment_url` | `http://127.0.0.1:8700` | Containment service |
 | `langfuse_host` | `http://localhost:3000` | Langfuse; `LANGFUSE_HOST` overrides it |
-| `records_path` | `incident-records.md` | Incident record log; `--records` overrides it |
+| `records_path` | `incident-records.jsonl` | Incident record log; `--records` overrides it |
 | `rules.loop` | `max_repeats 5`, `max_observations 25` | Repeat rule; `max_observations` is the only catch for reworded loops |
 | `rules.silent_error` | `count 3`, `window_minutes 5`, `patterns ["error","not found"]` | Silent-error rule |
 | `rules.cost_spike` | `median_multiplier 5`, `per_trace_usd 1.0` | Cost-spike rule |
@@ -108,7 +101,6 @@ Pass counts are pending. See [docs/verification.md](docs/verification.md#pending
 | `tripwire_guard` | `max_tool_calls 20`, `max_minutes 3` | Tool-server budget per ask round |
 | `fix_pr` | empty | Local clone, GitHub owner and repo for fix PRs; empty turns the tool off |
 | `owners` | `[jason]` | Who may approve or revert |
-| `room` | `agent-incidents` | Switch room name |
 
 Environment variables:
 
@@ -125,19 +117,18 @@ Environment variables:
 | `SWITCH_STATUS_MODE` | detector | `reply` (default) or `edit` |
 | `SLACK_BOT_TOKEN`, `SLACK_CHANNEL` | detector, slack path | Slack fallback |
 | `GITHUB_TOKEN` | tool server (fix PR) | Pull requests and contents write on the repo in `fix_pr` |
-| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | demo agent (online), evals | Real model calls |
+| `TOGETHER_API_KEY`, `TOGETHER_MODEL` | demo agent (online) | Real model calls through the Together client |
+| `DEMO_PRICE_INPUT_PER_MTOK`, `DEMO_PRICE_OUTPUT_PER_MTOK` | demo agent | Prices of `TOGETHER_MODEL`, used for trace costs |
+| `ANTHROPIC_API_KEY` | evals, exported in the shell | The evals run the Tripwire agent through the `claude` CLI |
 | `DEMO_BUG`, `DEMO_RUNS` | Compose demo agent | Bug to switch on (`none`, `loop`, `silent_error`, `cost_spike`) and run count |
 
 Keep secrets in `.env` (git-ignored) or the environment. Never commit them.
 
 ## Status
 
-- Offline suite: 348 passing, 5 paid evals skipped (no key).
-- Live: the Compose stack came up with Langfuse v3, and the detector polled Langfuse 35 times with HTTP 200.
-- Pending: the paid evals (T13, T16, T19), a live loop incident, and the Switch room tests (T14, T20). Each needs a key or a live Switch room. Steps are in [docs/verification.md](docs/verification.md).
-- Provisional: the Switch client and the agent package are built against [docs/switch-api.md](docs/switch-api.md) and have not been checked against a live room.
-
-Known issues, including a containment bug that can uncap a route when two incidents share it, are listed in [docs/verification.md](docs/verification.md#known-issues).
+- Offline suite: 433 passing, 5 paid evals skipped (no key).
+- Live, in a Switch room linked to Slack: detect, investigate, approve, contain and fix PR all ran end to end on a real loop incident.
+- Paid evals (T13, T16, T19) are not run yet.
 
 ## Future work
 

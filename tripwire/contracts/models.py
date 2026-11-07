@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 RuleName = Literal["loop", "silent_error", "cost_spike", "hourly_ceiling"]
 IncidentState = Literal[
@@ -21,7 +21,10 @@ IncidentState = Literal[
 Action = Literal["disable_route", "cap_max_steps", "fallback_model"]
 ActionSource = Literal["owner", "auto_pause"]
 
-ACTIONS: tuple[str, ...] = ("disable_route", "cap_max_steps", "fallback_model")
+ACTIONS: tuple[str, ...] = get_args(Action)
+CLOSED_STATES: frozenset[str] = frozenset({"resolved", "handed_off"})
+# Actions that leave the route running, so a quiet period proves something.
+NON_DISABLING_ACTIONS: frozenset[str] = frozenset({"cap_max_steps", "fallback_model"})
 
 # PATCH /incidents/{id} transitions (section 3). `contained` and `auto_paused` are set only by /actions,
 # `verifying` after a revert only by /revert. The extra `contained -> verifying` condition (active action is

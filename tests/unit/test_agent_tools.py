@@ -24,13 +24,12 @@ from tripwire.contracts.ports import ContainmentRefused
 from tripwire_agent.server import (
     APPROVAL_APPROVER,
     BUDGET_SPENT,
-    CUT_MARK,
-    MAX_TOOL_TEXT_CHARS,
     TripwireTools,
     build_server,
     build_tools,
     register,
 )
+from tripwire_agent.text import CUT_MARK, MAX_TOOL_TEXT_CHARS
 from tripwire_agent.tools.open_fix_pr import GitHubPulls, GitRepo
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -237,6 +236,17 @@ def test_request_containment_sends_owner_source(tools: TripwireTools, service: F
     ]
 
 
+def test_revert_works_after_budget_spent(tools: TripwireTools, service: FakeContainment, wall_clock: FakeClock) -> None:
+    """An owner-ordered revert still goes through after the round's budget ran out while the owner deployed the fix."""
+    for _ in range(21):
+        tools.flags_read("INC-1")
+    wall_clock.advance(minutes=30)
+
+    result = tools.revert_containment("INC-1")
+
+    assert (result != BUDGET_SPENT, service.writes[-1]) == (True, ("revert", "INC-1", {"by": APPROVAL_APPROVER}))
+
+
 def test_revert_sends_server_approver(tools: TripwireTools, service: FakeContainment) -> None:
     """The revert is recorded with the server's approver, never a name from the model."""
     tools.revert_containment("INC-1")
@@ -293,6 +303,28 @@ def test_T16_hand_off_written_once(tools: TripwireTools, service: FakeContainmen
     assert len(hand_offs(service)) == 1
 
 
+def test_T16_decline_resets_budget(tools: TripwireTools, service: FakeContainment, wall_clock: FakeClock) -> None:
+    """A decline starts a fresh budget, so time spent waiting for the owner's reason does not count."""
+    tools.flags_read("INC-1")
+    wall_clock.advance(minutes=5)
+    service.incidents["INC-1"].rejections = 1
+
+    results = [tools.flags_read("INC-1") for _ in range(20)]
+
+    assert (BUDGET_SPENT not in results, hand_offs(service)) == (True, [])
+
+
+def test_T16_containment_resets_budget(tools: TripwireTools, service: FakeContainment, wall_clock: FakeClock) -> None:
+    """Containment starts the fix-PR stage with a fresh budget, so waiting for the fix approval does not spend it."""
+    tools.flags_read("INC-1")
+    wall_clock.advance(minutes=5)
+    service.incidents["INC-1"].action = "disable_route"
+
+    results = [tools.flags_read("INC-1") for _ in range(20)]
+
+    assert (BUDGET_SPENT not in results, hand_offs(service)) == (True, [])
+
+
 def test_T16_reopen_resets_budget(tools: TripwireTools, service: FakeContainment, wall_clock: FakeClock) -> None:
     """A reopened incident starts a fresh call count and a fresh clock."""
     for _ in range(20):
@@ -328,6 +360,27 @@ def test_hand_off_refusal_is_logged(
         BUDGET_SPENT,
         [("WARNING", "could not hand off INC-1 after budget spent: illegal transition: detected -> handed_off")],
     )
+
+
+def test_guard_uses_configured_call_limit(service: FakeContainment) -> None:
+    """The max_tool_calls value in the config sets the round budget: the third call is refused at a limit of two."""
+    cfg = load_config_dict({"tripwire_guard": {"max_tool_calls": 2}})
+    tools = build_tools(cfg, {}, service, FakeTraces(make_trace()))
+
+    results = [tools.flags_read("INC-1") for _ in range(3)]
+
+    assert ([r == BUDGET_SPENT for r in results], service.incidents["INC-1"].state) == ([False, False, True], "handed_off")
+
+
+def test_guard_uses_configured_time_limit(service: FakeContainment, wall_clock: FakeClock) -> None:
+    """A max_duration of one minute refuses a call made 61 seconds after the first."""
+    tools = TripwireTools(service, FakeTraces(make_trace()), wall_clock, max_duration=timedelta(minutes=1))
+
+    first = tools.flags_read("INC-1")
+    wall_clock.advance(seconds=61)
+    second = tools.flags_read("INC-1")
+
+    assert (first == BUDGET_SPENT, second == BUDGET_SPENT) == (False, True)
 
 
 class _Recorder:
@@ -542,8 +595,8 @@ def test_fix_pr_refusal_logs_missing_setting(
 
 def test_langfuse_host_comes_from_config_unless_env_set(cfg: TripwireConfig) -> None:
     """The tool server reads traces from the same Langfuse host as the detector: env first, then config."""
-    from tripwire_agent.server import langfuse_host
+    from tripwire.contracts.config import resolve_langfuse_host
 
-    assert langfuse_host(cfg, {}) == cfg.langfuse_host
-    assert langfuse_host(cfg, {"LANGFUSE_HOST": ""}) == cfg.langfuse_host
-    assert langfuse_host(cfg, {"LANGFUSE_HOST": "http://langfuse-web:3000"}) == "http://langfuse-web:3000"
+    assert resolve_langfuse_host(cfg, {}) == cfg.langfuse_host
+    assert resolve_langfuse_host(cfg, {"LANGFUSE_HOST": ""}) == cfg.langfuse_host
+    assert resolve_langfuse_host(cfg, {"LANGFUSE_HOST": "http://langfuse-web:3000"}) == "http://langfuse-web:3000"

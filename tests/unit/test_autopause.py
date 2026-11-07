@@ -117,6 +117,31 @@ def test_T8_fires_at_ten_minutes(spy, switch, clock, cfg) -> None:
     ]
 
 
+def test_T8_decline_stops_the_ten_minute_timer(spy, switch, clock, cfg) -> None:
+    """After an owner declines, the 10-minute timer no longer pauses the route: the owner is deciding."""
+    inc = _open_incident(spy, switch, clock, trace_ids=())
+    spy.update(inc.id, rejections=1)
+    clock.advance(minutes=10)
+
+    paused = run_autopause(
+        containment=spy, switch=switch, clock=clock, cfg=cfg, traces=[], ingest=IngestFake(spy, switch, clock)
+    )
+
+    assert (paused, spy.auto_pause_calls()) == ([], [])
+
+
+def test_T8_decline_still_pauses_at_half_budget(spy, switch, clock, cfg) -> None:
+    """A decline does not switch off the money guard: half the loss budget still pauses the route."""
+    inc = _open_incident(spy, switch, clock, trace_ids=["t1"])
+    spy.update(inc.id, rejections=1)
+
+    paused = run_autopause(
+        containment=spy, switch=switch, clock=clock, cfg=cfg, traces=[_trace(25.0)], ingest=IngestFake(spy, switch, clock)
+    )
+
+    assert paused == [AutoPause(incident_id=inc.id, route=ROUTE, spend_usd=25.0)]
+
+
 def test_T8_not_at_9m59s_or_24_99(spy, switch, clock, cfg) -> None:
     """Just under both thresholds, nothing is paused and no apply is sent."""
     inc = _open_incident(spy, switch, clock, trace_ids=["t1"])

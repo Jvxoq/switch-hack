@@ -1,7 +1,8 @@
 """Auto-pause and the hourly ceiling (E02). Runs once per detector poll, after the rules have run.
 
 Auto-pause: each open incident with no active action and no earlier auto-pause gets `disable_route` when its
-spend reaches `budget_fraction` of the route's loss budget, or when it is `auto_pause.minutes` old. The
+spend reaches `budget_fraction` of the route's loss budget, or when it is `auto_pause.minutes` old with no owner
+decline yet. The
 containment service checks the same thresholds and refuses otherwise.
 
 Hourly ceiling: when a route spends at least its `hourly_ceiling_usd` in the last hour, a `hourly_ceiling` hit
@@ -125,7 +126,9 @@ def _due(inc: Incident, spend: float, cfg: TripwireConfig, now: datetime) -> boo
     route_cfg = cfg.routes[inc.route]
     if spend >= cfg.auto_pause.budget_fraction * route_cfg.loss_budget_usd:
         return True
-    if now - inc.opened_at >= timedelta(minutes=cfg.auto_pause.minutes):
+    # The 10-minute timer stands in for "no owner reply". A decline is a reply: the owner is deciding, so the
+    # timer must not pause the route under them. The money triggers above and below still apply.
+    if inc.rejections == 0 and now - inc.opened_at >= timedelta(minutes=cfg.auto_pause.minutes):
         return True
     return inc.rule == CEILING_RULE and spend >= route_cfg.hourly_ceiling_usd
 

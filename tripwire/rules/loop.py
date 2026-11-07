@@ -24,8 +24,6 @@ from typing import Any, Iterable
 from tripwire.contracts.config import RulesConfig
 from tripwire.contracts.models import Observation, RuleHit, Trace
 
-DEFAULT_ALLOW_LIST_TOOLS: tuple[str, ...] = ("list_orders_page",)
-
 
 def _collapse(text: str) -> str:
     return " ".join(text.lower().split())
@@ -65,7 +63,7 @@ class LoopRule:
 
     name = "loop"
 
-    def __init__(self, allow_list_tools: Iterable[str] = DEFAULT_ALLOW_LIST_TOOLS) -> None:
+    def __init__(self, allow_list_tools: Iterable[str]) -> None:
         self._allow_list = frozenset(allow_list_tools)
 
     def evaluate(self, traces: list[Trace], cfg: RulesConfig, now: datetime) -> list[RuleHit]:
@@ -112,6 +110,3 @@ class LoopRule:
             groups[(obs.name, _normalise_input(obs.input))].append(obs)
         repeated = [obs for group in groups.values() if len(group) >= max_repeats for obs in group]
         return sorted(repeated, key=lambda obs: (obs.start_time, obs.id))
-
-
-rule = LoopRule()

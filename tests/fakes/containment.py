@@ -15,6 +15,8 @@ from typing import Any
 from tripwire.contracts.config import TripwireConfig
 from tripwire.contracts.models import (
     ACTIONS,
+    CLOSED_STATES,
+    NON_DISABLING_ACTIONS,
     TRANSITIONS,
     Action,
     ActionSource,
@@ -24,7 +26,6 @@ from tripwire.contracts.ports import ContainmentRefused
 
 RULES = ("loop", "silent_error", "cost_spike", "hourly_ceiling")
 STATES = frozenset(TRANSITIONS) | {"resolved", "handed_off", "contained", "auto_paused"}
-CLOSED_STATES = frozenset({"resolved", "handed_off"})
 # Fields PATCH may change (state is checked against TRANSITIONS separately).
 PATCHABLE = frozenset(
     {"state", "hit_count", "trace_ids", "cost_usd", "thread_ref", "root_cause", "pr_url", "rejections",
@@ -45,7 +46,7 @@ class FakeContainment:
         cfg: TripwireConfig,
         *,
         max_steps_cap: int = 20,
-        fallback_model: str = "fallback-model",
+        fallback_model: str = "zai-org/GLM-5.3",
     ) -> None:
         self._clock = clock
         self._cfg = cfg
@@ -168,7 +169,7 @@ class FakeContainment:
         if new_state == "contained" or new_state == "auto_paused":
             raise ContainmentRefused(f"{new_state} is set only by /actions")
         if inc.state == "contained" and new_state == "verifying":
-            if inc.action not in ("cap_max_steps", "fallback_model"):
+            if inc.action not in NON_DISABLING_ACTIONS:
                 raise ContainmentRefused("contained -> verifying needs an active cap_max_steps or fallback_model")
             return
         if new_state not in TRANSITIONS.get(inc.state, frozenset()):

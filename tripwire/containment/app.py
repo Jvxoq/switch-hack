@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, get_args
 from uuid import uuid4
@@ -27,19 +27,22 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from tripwire.contracts.config import TripwireConfig, load_config
+from tripwire.clock import SystemClock
 from tripwire.contracts.models import (
     ACTIONS,
+    CLOSED_STATES,
+    NON_DISABLING_ACTIONS,
     TRANSITIONS,
     Incident,
     IncidentState,
+    RuleName,
     incident_from_dict,
     incident_to_dict,
 )
 from tripwire.contracts.ports import Clock, ContainmentRefused
 
-RULES: tuple[str, ...] = ("loop", "silent_error", "cost_spike", "hourly_ceiling")
+RULES: tuple[str, ...] = get_args(RuleName)
 STATES: frozenset[str] = frozenset(get_args(IncidentState))
-CLOSED_STATES: frozenset[str] = frozenset({"resolved", "handed_off"})
 REOPENABLE: frozenset[str] = frozenset({"contained", "verifying", "auto_paused"})
 PATCHABLE: frozenset[str] = frozenset(
     {
@@ -59,7 +62,7 @@ PATCH_DATETIME_FIELDS: frozenset[str] = frozenset({"quiet_since", "resolved_at"}
 SWITCH_APPROVAL = "switch-approval"
 # Values the menu actions set. The config has no field for them, so they are fixed here.
 MAX_STEPS_CAP = 20
-FALLBACK_MODEL = "fallback-model"
+FALLBACK_MODEL = "zai-org/GLM-5.3"  # a real Together model id: the demo agent calls Together with it as-is
 
 INCIDENTS_FILE = "incidents.json"
 FLAGS_FILE = "flags.json"
@@ -296,7 +299,7 @@ class ContainmentStore:
         if new_state in ("contained", "auto_paused"):
             raise Refused(f"{new_state} is set only by /actions")
         if inc.state == "contained" and new_state == "verifying":
-            if inc.action not in ("cap_max_steps", "fallback_model"):
+            if inc.action not in NON_DISABLING_ACTIONS:
                 raise Refused("contained -> verifying needs an active cap_max_steps or fallback_model")
             return
         if new_state not in TRANSITIONS.get(inc.state, frozenset()):
@@ -417,13 +420,6 @@ def get_store(request: Request) -> ContainmentStore:
 StoreDep = Annotated[ContainmentStore, Depends(get_store)]
 
 
-class _Clock:
-    """Real clock for the default app."""
-
-    def now(self) -> datetime:
-        return datetime.now(UTC)
-
-
 def create_app(config: TripwireConfig, clock: Clock, state_dir: Path) -> FastAPI:
     """Build the service. Nothing is opened here; the store is built in `lifespan`."""
 
@@ -487,4 +483,4 @@ def create_default_app() -> FastAPI:
     """
     config = load_config(os.environ.get("TRIPWIRE_CONFIG", "tripwire.yaml"))
     state_dir = Path(os.environ.get("TRIPWIRE_STATE_DIR", "containment-state"))
-    return create_app(config, _Clock(), state_dir)
+    return create_app(config, SystemClock(), state_dir)

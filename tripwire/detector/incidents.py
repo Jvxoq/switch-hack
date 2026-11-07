@@ -2,17 +2,20 @@
 
 The containment service is the only incident store. This module keeps no incident state of its own, except the
 set of queued incidents it has already nudged (in memory; a restart may repeat one nudge, never a state change).
+It also keeps in memory the ids of incidents whose alert was posted, so a missing thread id never repeats an alert.
 """
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Iterable
 
-from tripwire.contracts.models import Incident, RuleHit
+from tripwire.contracts.models import CLOSED_STATES, Incident, RuleHit
 from tripwire.contracts.ports import Clock, ContainmentClient, ContainmentRefused, SwitchPoster
 
-_CLOSED = frozenset({"resolved", "handed_off"})
+log = logging.getLogger(__name__)
+
 # An incident in one of these states is using Tripwire's attention; others queue behind it (decision #25).
 _BUSY = frozenset({"investigating", "awaiting_approval"})
 _SHOWN_TRACES = 3
@@ -24,18 +27,27 @@ class IncidentManager:
         self._switch = switch
         self._clock = clock
         self._nudged: set[str] = set()
+        self._alerted: set[str] = set()
 
-    def ingest(self, hits: Iterable[RuleHit]) -> None:
+    def ingest(self, hits: Iterable[RuleHit]) -> list[str]:
         """Fold one evaluation of the rolling window into the open incidents.
 
         The detector passes the full window on every poll, so a trace already counted is never counted twice.
+        Each (rule, route) group is guarded: a failing group is logged and the other groups still run.
+        Returns one event line per failed group.
         """
         groups: dict[tuple[str, str], list[RuleHit]] = defaultdict(list)
         for hit in hits:
             groups[(hit.rule, hit.route)].append(hit)
+        events: list[str] = []
         for (rule, route), group in groups.items():
-            self._ingest_group(rule, route, _cost_by_trace(group))
+            try:
+                self._ingest_group(rule, route, _cost_by_trace(group))
+            except Exception:
+                log.exception("ingest failed for %s on %s", rule, route)
+                events.append(f"ingest failed for {rule} on {route}")
         self._nudge_next_queued()
+        return events
 
     # ---- one (rule, route) group ----------------------------------------
 
@@ -43,7 +55,9 @@ class IncidentManager:
         incident = self._find_open(rule, route)
         if incident is None:
             incident = self._open(rule, route)
-            incident = self._count_traces(incident, costs)
+            # Usually a new incident with no traces yet. `_open` can return an incident another poll just opened.
+            new = {tid: cost for tid, cost in costs.items() if tid not in incident.trace_ids}
+            incident = self._count_traces(incident, new)
             self._alert(incident)
             return
 
@@ -52,19 +66,22 @@ class IncidentManager:
             return
         incident = self._count_traces(incident, new)
         if incident.thread_ref is None:
-            self._alert(incident)
+            if incident.id not in self._alerted:
+                self._alert(incident)
         else:
             self._switch.set_status(incident.thread_ref, _status_text(incident))
 
     def _count_traces(self, incident: Incident, costs: dict[str, float]) -> Incident:
-        """Count the traces not yet on the incident. `costs` maps trace id to its cost in this window."""
-        new = {tid: cost for tid, cost in costs.items() if tid not in incident.trace_ids}
-        trace_ids = list(incident.trace_ids) + list(new)
+        """Add the traces in `costs` to the incident. Callers pass only traces not yet on the incident.
+
+        `costs` maps trace id to its cost in this window.
+        """
+        trace_ids = list(incident.trace_ids) + list(costs)
         return self._containment.update(
             incident.id,
             trace_ids=trace_ids,
             hit_count=len(trace_ids),
-            cost_usd=round(incident.cost_usd + sum(new.values()), 6),
+            cost_usd=round(incident.cost_usd + sum(costs.values()), 6),
         )
 
     def _open(self, rule: str, route: str) -> Incident:
@@ -79,7 +96,7 @@ class IncidentManager:
 
     def _find_open(self, rule: str, route: str) -> Incident | None:
         for incident in self._containment.list(open_only=True):
-            if incident.rule == rule and incident.route == route and incident.state not in _CLOSED:
+            if incident.rule == rule and incident.route == route and incident.state not in CLOSED_STATES:
                 return incident
         return None
 
@@ -89,6 +106,7 @@ class IncidentManager:
         """Post the alert for a new incident. If another incident is using Tripwire, queue this one and say so."""
         blocker = self._busy_incident(exclude=incident.id)
         thread_ref = self._switch.post_alert(incident, _alert_text(incident, blocker))
+        self._alerted.add(incident.id)
         fields: dict[str, object] = {"thread_ref": thread_ref}
         if blocker is not None and incident.state == "detected":
             fields["state"] = "queued"

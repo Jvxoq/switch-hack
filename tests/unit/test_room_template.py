@@ -45,5 +45,5 @@ def test_template_instructions_name_the_reply_approval() -> None:
     """The template carries the reply-based approval line, so Console imports the same rule the file states."""
     instructions = _template()["agent"]["instructions"]
 
-    assert "reply `@tripwire approve`" in instructions
+    assert "Reply `@tripwire approve INC-<n>`" in instructions
     assert "Allow once" not in instructions

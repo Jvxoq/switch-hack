@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tests.fakes.clock import DEFAULT_START
 from tests.fakes.traces import make_trace
+from tripwire.contracts.config import TripwireConfig
 from tripwire.rules.loop import LoopRule
 
 NOW = DEFAULT_START
@@ -10,7 +11,7 @@ LIST_PAGE = ("tool", {"page": 1}, "ok", "DEFAULT", 0.0, "list_orders_page")
 
 
 def _evaluate(traces, cfg):
-    return LoopRule().evaluate(traces, cfg.rules, NOW)
+    return LoopRule(TripwireConfig().allow_list_tools).evaluate(traces, cfg.rules, NOW)
 
 
 def test_T1_loop_fires_at_5_not_4(cfg):
