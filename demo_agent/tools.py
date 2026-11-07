@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-PENDING_HINT = "call get_order again with the same order_id"
+PENDING_HINT = "order is still processing; do not retry, report it as pending"
 SILENT_ERROR_BODY = {"error": "customer not found"}
 
 ORDERS: dict[str, dict[str, Any]] = {
