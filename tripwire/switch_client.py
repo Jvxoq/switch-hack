@@ -5,16 +5,14 @@ Two posting paths, both selectable (docs/switch-api.md, "Alert path"):
 - path "slack" (FALLBACK, `SlackFallbackClient`): a Slack bot posts with `chat.postMessage`.
 `build_poster()` picks one from the environment (`SWITCH_PATH`, default "agent").
 
-`status_mode` picks how `set_status` works: "reply" (default, posts `Status: <state>` in the thread) or
-"edit" (edits the first message). The docs document no edit operation, so "reply" is the default.
-
-Provisional until H00 confirms:
-- thread_ref: the agent path reads the thread id from the POST response (`thread_id`, then `message.thread_id`,
-  then the message `id`). The response shape is not documented.
-- replies: the agent path sends `thread_id` in the body of POST /agents/{id}/message to stay in the thread.
-- `@tripwire` in content must address Tripwire (the `addressed` flag is not documented).
-- edit mode: `POST /agents/{id}/ops/update_message` with `message_id` (UNCONFIRMED endpoint); Slack uses `chat.update`.
-- Slack path: a bot post is treated as a human sender for addressing (UNCONFIRMED).
+Verified against self-hosted Switch 0.31.0 (docs/switch-api.md, "Verified against self-hosted Switch"):
+- `POST /agents/{id}/message` takes only `{room_id, content}` and answers `{"ok": true, "event_id": "sw_..."}`.
+  The `event_id` is the message id, and it is the thread root for replies. The REST route ignores `thread_id`,
+  so a REST post can never land in a thread.
+- Threaded replies need an open connection in the room and the `post_message` operation with `thread_id`.
+  The detector has no connection, so its `reply()` posts top-level. Tripwire's own agent threads its replies.
+- `set_status` edit mode calls `ops/update_message`, which Switch 0.31 does not have (404). Reply is the only working mode.
+- `@tripwire` in content sets `payload.addressed` (name mention). Plain text does not.
 """
 
 from __future__ import annotations
@@ -123,11 +121,10 @@ class SwitchClient(_Base):
             self._dry("post alert", content)
             return f"dry-run-{incident.id}"
         data = self._post(f"/agents/{self.agent_id}/message", {"room_id": self.room_id, "content": content})
-        message = data.get("message") if isinstance(data.get("message"), dict) else {}
-        thread_ref = data.get("thread_id") or message.get("thread_id") or data.get("id") or message.get("id")
-        if not thread_ref:
-            raise SwitchError("Switch accepted the alert but returned no thread id")
-        return str(thread_ref)
+        event_id = data.get("event_id")
+        if not event_id:
+            raise SwitchError("Switch accepted the alert but returned no event_id")
+        return str(event_id)
 
     def set_status(self, thread_ref: str, text: str) -> None:
         if self.status_mode == "edit":
@@ -140,9 +137,13 @@ class SwitchClient(_Base):
         self.reply(thread_ref, _status_text(text))
 
     def reply(self, thread_ref: str, text: str) -> None:
-        body = {"room_id": self.room_id, "thread_id": thread_ref, "content": text}
+        """Post a top-level message. `thread_ref` is accepted for the port, but the REST route cannot thread.
+
+        Switch's REST message route ignores `thread_id`, so sending it would only pretend to thread.
+        """
+        body = {"room_id": self.room_id, "content": text}
         if self.dry_run:
-            self._dry("reply", str(body))
+            self._dry("reply", f"{body} (thread {thread_ref} not joined: REST cannot thread)")
             return
         self._post(f"/agents/{self.agent_id}/message", body)
 
