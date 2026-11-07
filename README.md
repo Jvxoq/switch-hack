@@ -5,6 +5,7 @@ Tripwire: a Switch room agent that watches Langfuse traces for runaway AI-agent 
 - [Product proposal](tripwire-product-proposal.md): problem, design, flow charts, decisions, test plan.
 - Flow charts: [`images/`](images/)
 - Status and what was verified: [docs/verification.md](docs/verification.md)
+- **Set up in Switch:** [docs/switch-setup.md](docs/switch-setup.md) is the click-by-click guide for your own Switch Console and Slack on a laptop.
 
 ![Tripwire overview](images/01-overview.png)
 

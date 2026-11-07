@@ -242,6 +242,23 @@ def test_T7_build_poster_uses_env_status_mode():
     assert build_poster(env).status_mode == "edit"
 
 
+def test_status_defaults_to_reply_without_env() -> None:
+    """Edit is undocumented in Switch, so a plain setup posts status replies and never calls the edit endpoint."""
+    assert build_poster({"SWITCH_DRY_RUN": "1"}).status_mode == "reply"
+    assert SlackFallbackClient("xoxb-test", "C0", dry_run=True).status_mode == "reply"
+
+
+def test_default_status_posts_reply_not_edit() -> None:
+    """With the default mode, a status update is a new reply in the thread and no edit request is sent."""
+    recorder = Recorder()
+    poster = _agent(recorder)
+
+    poster.set_status("thr_1", "awaiting_approval")
+
+    assert [str(request.url) for request in recorder.requests] == [f"{BASE}/agents/{AGENT_ID}/message"]
+    assert recorder.body() == {"room_id": ROOM_ID, "thread_id": "thr_1", "content": "Status: awaiting_approval"}
+
+
 def test_every_switch_request_carries_timeout() -> None:
     """A Switch call that never answers must end at the client's timeout, not hang the detector."""
     timeouts: list[float | None] = []
