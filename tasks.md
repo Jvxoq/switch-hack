@@ -209,7 +209,7 @@ Size: S ≈ <1 h agent time, M ≈ 1–2 h, L ≈ 2–4 h. `H` = needs the human
 | K01 | Docker Compose + self-hosted Langfuse | E04, S01, D01 | M | – | done | Compose stack, Dockerfile, Langfuse bootstrap, .env.example. Live-verified (K01c): Langfuse pinned v3, 6 healthchecked services healthy, detector 35/35 trace polls 200. Live loop incident needs real API key. |
 | H01 | Switch room setup: template, allowed senders (human) | A01, H00 | S | – | blocked | H — waits on H00 (skipped by human for now). |
 | H02 | Live Switch tests + E2E script | K01, H01, A02 | M | T14, T20 | blocked | H — waits on H01/H00 (skipped by human for now). |
-| X01 | Verification, paid eval run, README | H02, A03, I01 | M | all | todo | key gate |
+| X01 | Verification, paid eval run, README | H02, A03, I01 | M | all | blocked | Verification (docs/verification.md) + README done; 4 bugs fixed; 348 pass/5 paid skipped. PENDING: paid evals (key), T14/T20 (live Switch). O1–O4 being fixed (C-FIX6/7). |
 
 **Waves:** `C01, C02` → `H00, R*, S01, L01, D01, P01, E00, E03` → `W01, E01, E02, I01, A01` → `E04, A02, A03, H01` → `K01` → `H02` → `X01`.
 
