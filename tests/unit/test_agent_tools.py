@@ -538,3 +538,12 @@ def test_fix_pr_refusal_logs_missing_setting(
     assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
         ("WARNING", "fix-PR tool is off: set fix_pr.github_owner, fix_pr.github_repo in the config"),
     ]
+
+
+def test_langfuse_host_comes_from_config_unless_env_set(cfg: TripwireConfig) -> None:
+    """The tool server reads traces from the same Langfuse host as the detector: env first, then config."""
+    from tripwire_agent.server import langfuse_host
+
+    assert langfuse_host(cfg, {}) == cfg.langfuse_host
+    assert langfuse_host(cfg, {"LANGFUSE_HOST": ""}) == cfg.langfuse_host
+    assert langfuse_host(cfg, {"LANGFUSE_HOST": "http://langfuse-web:3000"}) == "http://langfuse-web:3000"

@@ -65,6 +65,10 @@ def run_autopause(
         except ContainmentRefused as refused:
             log.warning("auto-pause refused for %s: %s", inc.id, refused.reason)
             continue
+        except Exception:
+            # Containment unreachable or failing: this incident is retried on the next poll, the others still run.
+            log.exception("auto-pause failed for %s", inc.id)
+            continue
         paused.append(AutoPause(incident_id=inc.id, route=inc.route, spend_usd=spend))
         try:
             _offer_revert(switch, inc, spend)

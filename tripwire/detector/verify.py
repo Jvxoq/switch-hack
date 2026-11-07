@@ -9,6 +9,7 @@ posted through `write_record`, which the caller injects (it wraps `tripwire.reco
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
 
@@ -21,6 +22,8 @@ NON_DISABLING_ACTIONS = ("cap_max_steps", "fallback_model")
 
 # Renders the record for an incident, appends it to the record log, and returns the text to post.
 WriteRecord = Callable[[Incident], str]
+
+log = logging.getLogger(__name__)
 
 
 class Verifier:
@@ -51,6 +54,10 @@ class Verifier:
                 event = self._advance(inc)
             except ContainmentRefused as err:
                 event = f"{inc.id}: refused: {err.reason}"
+            except Exception:
+                # One incident's failure (for example Switch down for its thread) must not stop the others.
+                log.exception("verify step failed for %s", inc.id)
+                event = f"{inc.id}: verify failed"
             if event:
                 events.append(event)
         return events
@@ -70,8 +77,8 @@ class Verifier:
         """Render, append and post the record of a handed-off incident. Once per incident per process."""
         if inc.id in self._recorded:
             return None
-        self._recorded.add(inc.id)
         self._post_record(inc)
+        self._recorded.add(inc.id)
         return f"{inc.id}: recorded (handed_off)"
 
     # ---- internals -------------------------------------------------------

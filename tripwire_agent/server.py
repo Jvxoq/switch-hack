@@ -21,7 +21,7 @@ import os
 import sys
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -38,7 +38,6 @@ from tripwire.langfuse_client import LangfuseClient
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = "tripwire.yaml"
-DEFAULT_LANGFUSE_HOST = "https://cloud.langfuse.com"
 
 APPROVAL_APPROVER = "switch-approval"
 BUDGET_SPENT = "BUDGET SPENT: post partial findings and stop"
@@ -308,13 +307,18 @@ def build_tools(
     )
 
 
+def langfuse_host(cfg: TripwireConfig, environ: Mapping[str, str]) -> str:
+    """The LANGFUSE_HOST env var wins, otherwise the config's `langfuse_host`, the same rule as the detector."""
+    return environ.get("LANGFUSE_HOST") or cfg.langfuse_host
+
+
 def main() -> None:
     """Serve the tools over MCP stdio. stdout carries the protocol, so logs go to stderr."""
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     cfg = load_config(os.environ.get("TRIPWIRE_CONFIG", DEFAULT_CONFIG_PATH))
     containment = ContainmentHTTPClient(cfg.containment_url)
     traces = LangfuseClient(
-        os.environ.get("LANGFUSE_HOST", DEFAULT_LANGFUSE_HOST),
+        langfuse_host(cfg, os.environ),
         resolve_secret(cfg, "langfuse_public_key"),
         resolve_secret(cfg, "langfuse_secret_key"),
     )

@@ -240,3 +240,17 @@ def test_T7_build_poster_selects_path_from_env():
 def test_T7_build_poster_uses_env_status_mode():
     env = {"SWITCH_DRY_RUN": "1", "SWITCH_STATUS_MODE": "edit"}
     assert build_poster(env).status_mode == "edit"
+
+
+def test_every_switch_request_carries_timeout() -> None:
+    """A Switch call that never answers must end at the client's timeout, not hang the detector."""
+    timeouts: list[float | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeouts.append(request.extensions["timeout"]["read"])
+        return httpx.Response(200, json={"thread_id": "th-1"})
+
+    client = SwitchClient(BASE, AGENT_ID, KEY, ROOM_ID, transport=httpx.MockTransport(handler))
+    client.post_alert(_incident(), "alert")
+
+    assert timeouts == [10.0]
