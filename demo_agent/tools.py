@@ -61,9 +61,6 @@ def execute_tool(name: str, tool_input: dict[str, Any], bug: str) -> tuple[dict[
 
 
 def _get_order(order_id: str, bug: str) -> tuple[dict[str, Any], str]:
-    if bug == "loop":
-        # Deterministic loop bug: the hint makes a model repeat the identical call.
-        return {"status": "pending", "hint": PENDING_HINT}, "DEFAULT"
     order = ORDERS.get(order_id)
     if order is None:
         return {"error": "order not found"}, "ERROR"
